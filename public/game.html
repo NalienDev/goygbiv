@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>In Game — GOYGBIV</title>
+  <meta name="description" content="GOYGBIV musical roulette in session. Guess who listens to the playing song!">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="bg-ambient">
+    <div class="bg-orb bg-orb--green"></div>
+    <div class="bg-orb bg-orb--orange"></div>
+  </div>
+
+  <div class="page-container page-container--wide">
+    <!-- Top Header -->
+    <header class="w-full flex-center" style="justify-content: space-between; margin-bottom: var(--space-xl);">
+      <div class="flex-center gap-md">
+        <a href="/" class="logo logo--sm">GOYGBIV</a>
+        <div id="round-indicator" class="round-badge">Round 1</div>
+      </div>
+
+      <div class="flex-center gap-md">
+        <div id="playback-status-pill" class="settings-pill" style="display: flex; align-items: center; gap: 6px;">
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--clr-spotify);"></span>
+          <span id="playback-status-text">Ready</span>
+        </div>
+        <div id="user-badge" class="flex-center gap-sm">
+          <div id="user-avatar" class="player-avatar" style="width: 34px; height: 34px; font-size: 0.85rem;"></div>
+          <span id="user-name" class="player-name" style="font-size: 0.85rem;"></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Game Grid -->
+    <div class="game-layout">
+      <!-- Left / Center Column: Stage -->
+      <main class="game-main">
+        <!-- Status & Phase Banner -->
+        <div class="flex-col gap-xs text-center w-full">
+          <div id="phase-title" class="phase-label">Get Ready...</div>
+          <p id="phase-subtitle" class="text-body" style="font-size: 0.9rem;">The roulette is choosing a song...</p>
+        </div>
+
+        <!-- Now Playing Vinyl Display -->
+        <div class="now-playing">
+          <div id="album-art-container" class="now-playing__art now-playing__art--spinning">
+            <img id="album-art-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%2312121a'/%3E%3Ccircle cx='50' cy='50' r='18' fill='%236c5ce7'/%3E%3Ccircle cx='50' cy='50' r='6' fill='%230a0a0f'/%3E%3C/svg%3E" alt="Album Art">
+          </div>
+
+          <div class="now-playing__info">
+            <div id="track-title" class="now-playing__title">Mystery Track 🎵</div>
+            <div id="track-artist" class="now-playing__artist">Listen closely...</div>
+            <div id="track-album" class="now-playing__album">Playing on your Spotify</div>
+          </div>
+        </div>
+
+        <!-- Timer Bar -->
+        <div class="w-full" style="max-width: 600px;">
+          <div class="flex-center" style="justify-content: space-between; margin-bottom: 4px;">
+            <span class="text-sm" id="timer-label">Time to vote</span>
+            <span class="text-sm" id="timer-seconds" style="font-weight: 700; color: var(--clr-violet);">--s</span>
+          </div>
+          <div class="timer-bar">
+            <div id="timer-fill" class="timer-bar__fill" style="width: 100%;"></div>
+          </div>
+        </div>
+
+        <!-- Voting Grid: Player Cards (Multi-Select) -->
+        <div class="w-full flex-col gap-md" style="max-width: 600px;">
+          <div class="flex-center" style="justify-content: space-between;">
+            <h2 class="form-label">Who listens to this song? (Multi-select)</h2>
+            <span class="text-sm" id="vote-count-hint">0 selected</span>
+          </div>
+
+          <div id="voting-grid" class="vote-grid">
+            <!-- Dynamically populated vote cards -->
+          </div>
+
+          <!-- Submit Votes Button -->
+          <button id="btn-submit-votes" class="btn btn--rainbow btn--lg w-full mt-sm" onclick="handleSubmitVotes()" disabled>
+            Lock In Votes
+          </button>
+        </div>
+
+        <!-- Reveal Breakdown (Shown during Reveal Phase) -->
+        <div id="reveal-card" class="glass-card w-full flex-col gap-md hidden" style="max-width: 600px;">
+          <h2 class="heading-md" style="color: var(--clr-green);">Round Results Revealed!</h2>
+          <div id="reveal-owners-text" class="text-body"></div>
+          <div id="reveal-score-delta" class="text-body" style="font-weight: 600;"></div>
+        </div>
+      </main>
+
+      <!-- Right Column: Sidebar Scoreboard -->
+      <aside class="game-sidebar">
+        <div class="glass-card glass-card--compact flex-col gap-md">
+          <div class="flex-center" style="justify-content: space-between;">
+            <h2 class="heading-md">Leaderboard</h2>
+            <span id="target-points-badge" class="round-badge" style="font-size: 0.7rem;">Target: 50 pts</span>
+          </div>
+
+          <div id="scoreboard-list" class="scoreboard">
+            <!-- Dynamic entries -->
+          </div>
+
+          <div class="flex-col gap-xs mt-sm" style="border-top: 1px solid var(--bg-glass-border); padding-top: var(--space-sm);">
+            <div class="text-sm" style="color: var(--text-muted);">Scoring rules:</div>
+            <div class="text-sm" style="color: var(--clr-green);">+1 point for each correct person</div>
+            <div class="text-sm" style="color: var(--clr-red);">-1 point for each wrong person</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Winner Celebration Overlay -->
+  <div id="winner-overlay" class="winner-overlay">
+    <div class="winner-crown">👑</div>
+    <div class="heading-lg" style="color: var(--clr-yellow); letter-spacing: 0.1em;">WINNER!</div>
+    <div id="winner-name" class="winner-name">Player Name</div>
+    <div id="winner-score" class="winner-score">Reached 50 Points!</div>
+    <button class="btn btn--rainbow btn--lg mt-xl" onclick="window.location.href='/'">
+      Back to Home
+    </button>
+  </div>
+
+  <!-- Confetti Container -->
+  <div id="confetti" class="confetti-container"></div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+  <script src="/js/spotifyAuth.js"></script>
+  <script src="/js/spotifyPlayer.js"></script>
+  <script src="/js/game.js"></script>
+</body>
+</html>

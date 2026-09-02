@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GOYGBIV — Auth Callback</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="bg-ambient"></div>
+  <div class="page-container">
+    <div class="page-center">
+      <div class="spinner"></div>
+      <p class="loading-text mt-lg">Connecting to Spotify...</p>
+      <p id="error-msg" class="text-sm hidden" style="color: var(--clr-red); margin-top: 1rem;"></p>
+    </div>
+  </div>
+
+  <script src="/js/spotifyAuth.js"></script>
+  <script>
+    (async () => {
+      try {
+        await exchangeCodeForToken();
+
+        // Check if there's a pending game to join
+        const pendingGame = sessionStorage.getItem('pending_game');
+        const returnPath = sessionStorage.getItem('spotify_return_path') || '/';
+        sessionStorage.removeItem('pending_game');
+        sessionStorage.removeItem('spotify_return_path');
+
+        if (pendingGame) {
+          window.location.href = `/lobby.html?game=${pendingGame}`;
+        } else {
+          window.location.href = returnPath;
+        }
+      } catch (err) {
+        console.error('Auth callback error:', err);
+        document.getElementById('error-msg').textContent = err.message;
+        document.getElementById('error-msg').classList.remove('hidden');
+
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 4000);
+      }
+    })();
+  </script>
+</body>
+</html>

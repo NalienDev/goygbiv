@@ -1,0 +1,16 @@
+{
+  "name": "goygbiv",
+  "version": "1.0.0",
+  "description": "Spotify Musical Roulette Game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.1.0"
+  }
+}

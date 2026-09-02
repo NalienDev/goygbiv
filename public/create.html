@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Game — GOYGBIV</title>
+  <meta name="description" content="Host a new musical roulette game on GOYGBIV.">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="bg-ambient">
+    <div class="bg-orb bg-orb--green"></div>
+    <div class="bg-orb bg-orb--orange"></div>
+  </div>
+
+  <div class="page-container">
+    <header class="w-full flex-center" style="justify-content: space-between; margin-bottom: var(--space-xl);">
+      <a href="/" class="logo logo--sm">GOYGBIV</a>
+      <div id="user-badge" class="flex-center gap-sm">
+        <div id="user-avatar" class="player-avatar" style="width: 36px; height: 36px; font-size: 0.9rem;"></div>
+        <span id="user-name" class="player-name" style="font-size: 0.85rem;"></span>
+      </div>
+    </header>
+
+    <main class="w-full" style="max-width: 640px;">
+      <div class="glass-card glass-card--static flex-col gap-xl">
+        <div>
+          <h1 class="heading-lg">Create New Game</h1>
+          <p class="text-body mt-xs">Configure your room rules and invite your friends.</p>
+        </div>
+
+        <form id="create-form" class="flex-col gap-xl" onsubmit="handleCreateGame(event)">
+          <!-- Display Name -->
+          <div class="form-group">
+            <label class="form-label" for="display-name">Your Display Name</label>
+            <input type="text" id="display-name" class="form-input" placeholder="Enter your display name" required maxlength="25">
+          </div>
+
+          <!-- Song Start Position -->
+          <div class="form-group">
+            <label class="form-label">Song Start Position</label>
+            <div class="toggle-group" id="song-start-group">
+              <button type="button" class="toggle-option active" data-value="beginning">Beginning (0:00)</button>
+              <button type="button" class="toggle-option" data-value="middle">Middle (~40%)</button>
+            </div>
+            <p class="text-sm mt-xs">Middle skips intros and jumps right into the chorus / main groove.</p>
+          </div>
+
+          <!-- Categories -->
+          <div class="form-group">
+            <label class="form-label">Song Sources (Pick at least one)</label>
+            <div class="checkbox-grid">
+              <div class="checkbox-card checked" data-category="top">
+                <div class="checkbox-card__indicator"></div>
+                <div>
+                  <div class="checkbox-card__label">Frequently Used</div>
+                  <div class="text-sm">Top listened tracks</div>
+                </div>
+              </div>
+
+              <div class="checkbox-card checked" data-category="playlists">
+                <div class="checkbox-card__indicator"></div>
+                <div>
+                  <div class="checkbox-card__label">In Playlists</div>
+                  <div class="text-sm">User's created playlists</div>
+                </div>
+              </div>
+
+              <div class="checkbox-card checked" data-category="albums">
+                <div class="checkbox-card__indicator"></div>
+                <div>
+                  <div class="checkbox-card__label">In Saved Albums</div>
+                  <div class="text-sm">Saved albums in library</div>
+                </div>
+              </div>
+            </div>
+            <p class="text-sm mt-xs">Rounds pick songs randomly under these categories, then check if others also have it anywhere!</p>
+          </div>
+
+          <!-- Points to Win -->
+          <div class="form-group">
+            <label class="form-label">Points to Win</label>
+            <div class="toggle-group" id="points-group">
+              <button type="button" class="toggle-option" data-value="30">30 Points (Quick)</button>
+              <button type="button" class="toggle-option active" data-value="50">50 Points (Standard)</button>
+              <button type="button" class="toggle-option" data-value="75">75 Points (Marathon)</button>
+            </div>
+          </div>
+
+          <!-- Spotify Device Selection -->
+          <div class="form-group">
+            <div class="flex-center" style="justify-content: space-between;">
+              <label class="form-label" for="device-select">Playback Device (Spotify Connect)</label>
+              <button type="button" class="btn btn--ghost btn--sm" onclick="refreshDevices()">↻ Refresh Devices</button>
+            </div>
+            <div class="device-selector">
+              <select id="device-select">
+                <option value="web-sdk">Loading in-browser player...</option>
+              </select>
+            </div>
+            <div id="device-hint" class="text-sm mt-xs">
+              Open Spotify on your phone/PC if you want playback on an external device.
+            </div>
+            <div id="premium-warning" class="premium-banner mt-sm hidden">
+              ⚠️ You have a Free Spotify account. You can host and vote, but audio playback requires Spotify Premium.
+            </div>
+          </div>
+
+          <!-- Submit -->
+          <button type="submit" id="btn-submit" class="btn btn--rainbow btn--lg w-full mt-md">
+            Create Lobby & Get Invite URL
+          </button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+  <script src="/js/spotifyAuth.js"></script>
+  <script src="/js/spotifyPlayer.js"></script>
+  <script src="/js/create.js"></script>
+</body>
+</html>

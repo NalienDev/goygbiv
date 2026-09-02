@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GOYGBIV — Musical Roulette</title>
+  <meta name="description" content="A Spotify-powered musical roulette game. Connect your music, invite friends, and guess who listens to what!">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="bg-ambient">
+    <div class="bg-orb bg-orb--green"></div>
+    <div class="bg-orb bg-orb--orange"></div>
+  </div>
+
+  <div class="page-container">
+    <div class="page-center">
+      <h1 class="logo">GOYGBIV</h1>
+      <p class="tagline">Musical Roulette — Guess who listens to what</p>
+
+      <div class="flex-col gap-lg mt-2xl" style="width: 100%; max-width: 400px;">
+        <!-- Not authenticated -->
+        <div id="auth-section">
+          <button id="btn-connect" class="btn btn--spotify btn--lg w-full" onclick="handleConnect()">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+            Connect with Spotify
+          </button>
+          <p class="text-sm text-center mt-md">Free accounts can join. Premium needed for audio playback.</p>
+        </div>
+
+        <!-- Authenticated -->
+        <div id="user-section" class="hidden">
+          <div class="glass-card flex-col gap-lg" style="align-items: center;">
+            <div class="flex-center gap-md">
+              <div id="user-avatar" class="player-avatar"></div>
+              <div>
+                <div id="user-name" class="player-name"></div>
+                <div id="user-type" class="text-sm"></div>
+              </div>
+            </div>
+
+            <div class="flex-col gap-sm w-full">
+              <button class="btn btn--rainbow btn--lg w-full" onclick="goToCreate()">
+                Create Game
+              </button>
+              <button class="btn btn--outline w-full" onclick="handleJoinPrompt()">
+                Join Game
+              </button>
+            </div>
+          </div>
+
+          <button class="btn btn--ghost mt-md w-full" onclick="handleLogout()">
+            Log out
+          </button>
+        </div>
+
+        <!-- Join prompt -->
+        <div id="join-section" class="hidden">
+          <div class="glass-card flex-col gap-md">
+            <h2 class="heading-md">Join a Game</h2>
+            <input id="join-code" type="text" class="form-input" placeholder="Enter game code..." maxlength="8">
+            <div class="flex-center gap-sm">
+              <button class="btn btn--primary" onclick="handleJoinCode()">Join</button>
+              <button class="btn btn--ghost" onclick="hideJoinPrompt()">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/js/spotifyAuth.js"></script>
+  <script>
+    // Check if returning from auth callback or if already logged in
+    document.addEventListener('DOMContentLoaded', () => {
+      // Check for game join URL in query params
+      const params = new URLSearchParams(window.location.search);
+      const gameId = params.get('game');
+
+      if (isAuthenticated()) {
+        showUserSection();
+        if (gameId) {
+          // Redirect to lobby
+          window.location.href = `/lobby.html?game=${gameId}`;
+        }
+      } else if (gameId) {
+        // Need to auth first, then join
+        sessionStorage.setItem('pending_game', gameId);
+      }
+    });
+
+    function showUserSection() {
+      const user = getSpotifyUser();
+      if (!user) return;
+
+      document.getElementById('auth-section').classList.add('hidden');
+      document.getElementById('user-section').classList.remove('hidden');
+      document.getElementById('user-name').textContent = user.displayName;
+      document.getElementById('user-type').textContent = user.isPremium ? '★ Premium' : 'Free Account';
+
+      const avatar = document.getElementById('user-avatar');
+      if (user.avatarUrl) {
+        avatar.innerHTML = `<img src="${user.avatarUrl}" alt="${user.displayName}">`;
+      } else {
+        avatar.textContent = user.displayName.charAt(0).toUpperCase();
+      }
+    }
+
+    async function handleConnect() {
+      try {
+        const returnPath = sessionStorage.getItem('pending_game')
+          ? `/lobby.html?game=${sessionStorage.getItem('pending_game')}`
+          : '/';
+        await startSpotifyAuth(returnPath);
+      } catch (err) {
+        showToast('Failed to connect: ' + err.message);
+      }
+    }
+
+    function goToCreate() {
+      window.location.href = '/create.html';
+    }
+
+    function handleJoinPrompt() {
+      document.getElementById('join-section').classList.remove('hidden');
+      document.getElementById('join-code').focus();
+    }
+
+    function hideJoinPrompt() {
+      document.getElementById('join-section').classList.add('hidden');
+    }
+
+    function handleJoinCode() {
+      const code = document.getElementById('join-code').value.trim();
+      if (!code) return;
+      window.location.href = `/lobby.html?game=${code}`;
+    }
+
+    function handleLogout() {
+      clearAuthData();
+      window.location.reload();
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      setTimeout(() => toast.classList.remove('visible'), 3000);
+    }
+
+    // Handle Enter key in join input
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && document.activeElement.id === 'join-code') {
+        handleJoinCode();
+      }
+    });
+  </script>
+</body>
+</html>

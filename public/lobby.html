@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lobby — GOYGBIV</title>
+  <meta name="description" content="Waiting lobby for GOYGBIV musical roulette game.">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="bg-ambient">
+    <div class="bg-orb bg-orb--green"></div>
+    <div class="bg-orb bg-orb--orange"></div>
+  </div>
+
+  <div class="page-container">
+    <header class="w-full flex-center" style="justify-content: space-between; margin-bottom: var(--space-xl);">
+      <a href="/" class="logo logo--sm">GOYGBIV</a>
+      <div id="user-badge" class="flex-center gap-sm">
+        <div id="user-avatar" class="player-avatar" style="width: 36px; height: 36px; font-size: 0.9rem;"></div>
+        <span id="user-name" class="player-name" style="font-size: 0.85rem;"></span>
+      </div>
+    </header>
+
+    <main class="w-full flex-col gap-xl" style="max-width: 720px; align-items: center;">
+      <!-- Lobby Header Card -->
+      <div class="glass-card glass-card--static w-full flex-col gap-md">
+        <div class="flex-center" style="justify-content: space-between; flex-wrap: wrap; gap: var(--space-sm);">
+          <div>
+            <div class="round-badge">ROOM CODE: <span id="room-code">...</span></div>
+            <h1 class="heading-lg mt-xs">Lobby</h1>
+          </div>
+          <div id="player-count-badge" class="round-badge" style="background: rgba(108,92,231,0.2); color: #fff;">
+            0 Players Connected
+          </div>
+        </div>
+
+        <!-- Invite URL -->
+        <div class="flex-col gap-xs mt-xs">
+          <label class="form-label">Invite Friends with this link</label>
+          <div class="invite-box w-full">
+            <span id="invite-url-text" class="invite-box__url">Generating link...</span>
+            <button id="copy-invite-btn" class="btn btn--primary btn--sm invite-box__copy" onclick="copyInviteUrl()">
+              📋 Copy Link
+            </button>
+          </div>
+        </div>
+
+        <!-- Game Settings Summary -->
+        <div class="flex-col gap-xs mt-sm">
+          <div class="form-label">Game Rules</div>
+          <div class="settings-pills" id="settings-pills">
+            <div class="settings-pill" id="pill-points">🎯 Target: 50 pts</div>
+            <div class="settings-pill" id="pill-start">⏳ Start: Beginning</div>
+            <div class="settings-pill" id="pill-categories">📂 Categories: Loading...</div>
+          </div>
+        </div>
+
+        <!-- Device Selector for this player -->
+        <div class="flex-col gap-xs mt-sm" id="player-device-box">
+          <div class="flex-center" style="justify-content: space-between;">
+            <label class="form-label" for="device-select">Your Spotify Device</label>
+            <button type="button" class="btn btn--ghost btn--sm" onclick="refreshLobbyDevices()">↻ Refresh</button>
+          </div>
+          <div class="device-selector">
+            <select id="device-select" onchange="handleDeviceChange()">
+              <option value="">Detecting player...</option>
+            </select>
+          </div>
+          <div id="premium-status" class="text-sm mt-xs"></div>
+        </div>
+      </div>
+
+      <!-- Connected Players Card -->
+      <div class="glass-card glass-card--static w-full flex-col gap-md">
+        <h2 class="heading-md">Players in Room</h2>
+        <div id="players-list" class="player-list">
+          <div class="text-sm text-center py-md" style="color: var(--text-muted);">Waiting for players to join...</div>
+        </div>
+      </div>
+
+      <!-- Host Action Controls -->
+      <div class="w-full flex-col gap-sm">
+        <div id="host-controls" class="w-full hidden">
+          <button id="start-game-btn" class="btn btn--rainbow btn--lg w-full" onclick="handleStartGame()" disabled>
+            Start Game (Requires min 2 players)
+          </button>
+        </div>
+        <div id="guest-controls" class="w-full text-center text-body">
+          <p>Waiting for host to start the game...</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Loading Overlay for Library Sync -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-overlay-text">Syncing Spotify music libraries...</div>
+    <p class="text-sm" style="color: var(--text-muted); max-width: 400px; text-align: center;">
+      Fetching songs from frequently used, playlists, and saved albums for all players...
+    </p>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+  <script src="/js/spotifyAuth.js"></script>
+  <script src="/js/spotifyPlayer.js"></script>
+  <script src="/js/lobby.js"></script>
+</body>
+</html>
