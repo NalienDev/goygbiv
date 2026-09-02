@@ -143,6 +143,10 @@ function updateLobbyUI(gameInfo) {
   if (gameInfo.settings) {
     document.getElementById('pill-points').textContent = `🎯 Target: ${gameInfo.settings.pointsToWin} pts`;
     document.getElementById('pill-start').textContent = `⏳ Start: ${gameInfo.settings.songStart === 'middle' ? 'Middle (~40%)' : 'Beginning (0:00)'}`;
+    const pillReveal = document.getElementById('pill-reveal');
+    if (pillReveal) {
+      pillReveal.textContent = `⏱️ Results: ${gameInfo.settings.revealDuration || 10}s`;
+    }
 
     const catLabels = {
       top: 'Frequently Used',

@@ -129,6 +129,7 @@ io.on('connection', (socket) => {
         songStart: data.songStart,
         categories: data.categories,
         pointsToWin: data.pointsToWin,
+        revealDuration: data.revealDuration,
       });
 
       // Host auto-joins
@@ -177,6 +178,9 @@ io.on('connection', (socket) => {
       currentPlayerId = data.playerId;
       socket.join(data.gameId);
 
+      const game = gameManager.getGame(data.gameId);
+      const gameInfo = gameManager.getGameInfo(data.gameId);
+
       // Broadcast to room
       io.to(data.gameId).emit('player-joined', {
         player: {
@@ -184,11 +188,16 @@ io.on('connection', (socket) => {
           displayName: player.displayName,
           avatarUrl: player.avatarUrl,
           isPremium: player.isPremium,
+          online: true,
         },
-        gameInfo: gameManager.getGameInfo(data.gameId),
+        gameInfo,
       });
 
-      callback({ success: true, gameInfo: gameManager.getGameInfo(data.gameId) });
+      callback({
+        success: true,
+        gameInfo,
+        currentRound: (game && game.currentRound && game.state !== 'finished') ? game.currentRound : null,
+      });
     } catch (err) {
       callback({ success: false, error: err.message });
     }
@@ -237,17 +246,17 @@ io.on('connection', (socket) => {
   // ── Submit Votes ──
   socket.on('submit-votes', (data, callback) => {
     const success = gameManager.submitVotes(data.gameId, currentPlayerId, data.votes);
-  // ── Submit Votes ──
-  socket.on('submit-votes', (data, callback) => {
-    const success = gameManager.submitVotes(data.gameId, currentPlayerId, data.votes);
     if (callback) callback({ success });
 
     // If all active players have submitted, reveal after a brief 1.5s delay
     if (gameManager.allVotesIn(data.gameId)) {
       const game = gameManager.getGame(data.gameId);
-      if (game && game.state === 'voting') {
+      if (game && game.state === 'voting' && !game.earlyRevealTimeout) {
         clearGameTimers(game);
-        setTimeout(() => doReveal(data.gameId), 1500);
+        game.earlyRevealTimeout = setTimeout(() => {
+          if (game) game.earlyRevealTimeout = null;
+          doReveal(data.gameId);
+        }, 1500);
       }
     }
   });
@@ -260,18 +269,25 @@ io.on('connection', (socket) => {
       const pid = currentPlayerId;
       gameManager.handleDisconnect(gid, pid);
 
-      // Debounce notifying the room — prevents flashing "player left" during page navigation
-      setTimeout(() => {
-        const game = gameManager.getGame(gid);
-        if (game) {
+      const game = gameManager.getGame(gid);
+      if (game) {
+        // Clear previous disconnect timer if any
+        if (game.disconnectTimers && game.disconnectTimers.has(pid)) {
+          clearTimeout(game.disconnectTimers.get(pid));
+        }
+
+        // Grace period (10s) before notifying and evaluating game continuation
+        const timer = setTimeout(() => {
+          if (game.disconnectTimers) game.disconnectTimers.delete(pid);
           const p = game.players.get(pid);
           if (p && !p.online) {
             io.to(gid).emit('player-left', {
               playerId: pid,
+              displayName: p.displayName,
               gameInfo: gameManager.getGameInfo(gid),
             });
 
-            // If game is in progress and only 1 player remains, end game
+            // If game is in progress and fewer than 2 players remain, end the game
             if (game.state !== 'lobby' && game.state !== 'finished') {
               const activeCount = gameManager.getActivePlayerCount(gid);
               if (activeCount < 2) {
@@ -280,14 +296,18 @@ io.on('connection', (socket) => {
                 io.to(gid).emit('pause-playback');
                 io.to(gid).emit('game-over', {
                   reason: 'not_enough_players',
-                  message: 'Game ended: A player left and there are not enough players to continue.',
+                  message: 'Game ended: A player left and there are not enough players to continue (minimum 2 players required).',
                   scoreboard: gameManager.getScoreboard(gid),
                 });
               }
             }
           }
+        }, 10000);
+
+        if (game.disconnectTimers) {
+          game.disconnectTimers.set(pid, timer);
         }
-      }, 5000);
+      }
     }
   });
 });
@@ -298,6 +318,7 @@ function clearGameTimers(game) {
   if (!game) return;
   if (game.listenTimeout) { clearTimeout(game.listenTimeout); game.listenTimeout = null; }
   if (game.votingTimeout) { clearTimeout(game.votingTimeout); game.votingTimeout = null; }
+  if (game.earlyRevealTimeout) { clearTimeout(game.earlyRevealTimeout); game.earlyRevealTimeout = null; }
   if (game.revealTimeout) { clearTimeout(game.revealTimeout); game.revealTimeout = null; }
 }
 
@@ -338,7 +359,7 @@ function startNewRound(gameId) {
     return;
   }
 
-  // Emit round info
+  // Emit round info and playback instruction
   io.to(gameId).emit('new-round', {
     roundNumber: round.roundNumber,
     track: {
@@ -349,12 +370,6 @@ function startNewRound(gameId) {
       albumArt: round.track.albumArt,
       durationMs: round.track.durationMs,
     },
-    positionMs: round.positionMs,
-  });
-
-  // Start playback on premium player devices
-  io.to(gameId).emit('play-track', {
-    uri: round.track.uri,
     positionMs: round.positionMs,
   });
 
@@ -386,7 +401,8 @@ function startNewRound(gameId) {
 
 function doReveal(gameId) {
   const game = gameManager.getGame(gameId);
-  if (!game) return;
+  // Strict idempotency: do not re-run reveal if already revealing, finished, etc.
+  if (!game || game.state !== 'voting') return;
 
   clearGameTimers(game);
 

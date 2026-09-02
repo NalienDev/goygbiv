@@ -8,6 +8,7 @@ let selectedPlayerIds = new Set();
 let hasSubmittedVotes = false;
 let currentPlayers = [];
 let timerInterval = null;
+let revealCountdown = null;
 let activeDeviceId = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -65,6 +66,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     );
     // Initial devices fetch
     setTimeout(refreshGameDevices, 1000);
+    const select = document.getElementById('game-device-select');
+    if (select) {
+      select.addEventListener('focus', () => refreshGameDevices());
+    }
   } else {
     document.getElementById('playback-status-pill').style.opacity = '0.6';
     document.getElementById('playback-status-text').textContent = 'Free Account (No audio)';
@@ -101,14 +106,48 @@ function rejoinGame() {
       currentPlayers = res.gameInfo.players || [];
       updateScoreboard(res.gameInfo.players, res.gameInfo.scores);
       document.getElementById('target-points-badge').textContent = `Target: ${res.gameInfo.settings.pointsToWin} pts`;
+
+      // Midgame state recovery if rejoining in an ongoing round
+      if (res.gameInfo.currentRound && res.gameInfo.state !== 'finished') {
+        syncMidgameRound(res.gameInfo, res.gameInfo.currentRound);
+      }
     }
   });
+}
+
+function syncMidgameRound(gameInfo, round) {
+  currentRound = round.roundNumber;
+  document.getElementById('round-indicator').textContent = `Round ${currentRound}`;
+
+  if (round.track) {
+    document.getElementById('track-title').textContent = round.track.name;
+    document.getElementById('track-artist').textContent = round.track.artists;
+    document.getElementById('track-album').textContent = round.track.album;
+    if (round.track.albumArt) {
+      document.getElementById('album-art-img').src = round.track.albumArt;
+    }
+  }
+
+  if (gameInfo.state === 'voting') {
+    document.getElementById('phase-title').textContent = 'Vote Now! 🗳️';
+    document.getElementById('phase-subtitle').textContent = 'Select anyone you think has this song in their library!';
+    renderVotingGrid(currentPlayers, true);
+
+    const remainingMs = Math.max(1000, (round.votingDeadline || Date.now()) - Date.now());
+    startTimer(remainingMs);
+  } else if (gameInfo.state === 'playing') {
+    document.getElementById('phase-title').textContent = 'Listen Carefully 🎧';
+    document.getElementById('phase-subtitle').textContent = 'Who in this room has this song in their library?';
+    renderVotingGrid(currentPlayers, false);
+  }
 }
 
 function setupGameSocketListeners() {
   // New round started
   socket.on('new-round', async (data) => {
+    // Clear any previous countdown or timer intervals
     clearInterval(timerInterval);
+    clearInterval(revealCountdown);
     resetTimerDisplay();
 
     currentRound = data.roundNumber;
@@ -151,18 +190,11 @@ function setupGameSocketListeners() {
     }
   });
 
-  // Play track instruction from server
-  socket.on('play-track', async (data) => {
-    if (user.isPremium && data.uri) {
-      const token = await getValidToken();
-      if (token) {
-        startSpotifyPlaybackDirect(token, data.uri, data.positionMs || 0);
-      }
-    }
-  });
-
   // Voting phase opened
   socket.on('voting-phase', (data) => {
+    // Ensure any reveal countdown is stopped
+    clearInterval(revealCountdown);
+
     document.getElementById('phase-title').textContent = 'Vote Now! 🗳️';
     document.getElementById('phase-subtitle').textContent = 'Select anyone you think has this song in their library!';
 
@@ -174,7 +206,7 @@ function setupGameSocketListeners() {
     submitBtn.textContent = 'Lock In Votes';
 
     // Start countdown timer
-    startTimer(data.timeLimit || 15000);
+    startTimer(data.timeLimit || 20000);
   });
 
   // Pause playback instruction
@@ -187,8 +219,6 @@ function setupGameSocketListeners() {
       }
     }
   });
-
-  let revealCountdown = null;
 
   // Reveal results
   socket.on('reveal-results', (data) => {
@@ -207,7 +237,7 @@ function setupGameSocketListeners() {
       secondsLeft--;
       if (secondsLeft <= 0) {
         clearInterval(revealCountdown);
-        subTitle.textContent = 'Loading next round...';
+        subTitle.textContent = 'Starting next round...';
       } else {
         subTitle.textContent = `Next round starts in ${secondsLeft}s...`;
       }
@@ -243,6 +273,7 @@ function setupGameSocketListeners() {
   // Game error (e.g. no songs in libraries)
   socket.on('game-error', (data) => {
     clearInterval(timerInterval);
+    clearInterval(revealCountdown);
     document.getElementById('phase-title').textContent = '⚠️ No Songs Found';
     document.getElementById('phase-subtitle').textContent = data.message || 'No playable tracks found';
     showToast(data.message || 'No songs found in libraries');

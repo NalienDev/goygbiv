@@ -34,9 +34,11 @@ class GameManager {
       fullLibraries: null,
       votes: new Map(), // playerId → Set<votedPlayerId>
       createdAt: Date.now(),
-      roundTimeout: null,
+      listenTimeout: null,
       votingTimeout: null,
+      earlyRevealTimeout: null,
       revealTimeout: null,
+      disconnectTimers: new Map(), // playerId → setTimeout
     };
 
     this.games.set(gameId, game);
@@ -61,6 +63,13 @@ class GameManager {
     const isExistingPlayer = game.players.has(player.id);
     if (game.state !== 'lobby' && !isExistingPlayer) {
       throw new Error('Game already started');
+    }
+
+    // Cancel any pending disconnect timer for this player
+    if (game.disconnectTimers && game.disconnectTimers.has(player.id)) {
+      clearTimeout(game.disconnectTimers.get(player.id));
+      game.disconnectTimers.delete(player.id);
+      console.log(`[GameManager] Cancelled disconnect timer for ${player.id}`);
     }
 
     const existingPlayer = game.players.get(player.id);
@@ -269,7 +278,8 @@ class GameManager {
    */
   revealResults(gameId) {
     const game = this.games.get(gameId);
-    if (!game || !game.currentRound) return null;
+    // Strict idempotency: only reveal if game is currently in voting state
+    if (!game || !game.currentRound || game.state !== 'voting') return null;
 
     game.state = 'reveal';
 
@@ -338,7 +348,7 @@ class GameManager {
   }
 
   /**
-   * Get public game info (for lobby display)
+   * Get public game info (for lobby and mid-game synchronization)
    */
   getGameInfo(gameId) {
     const game = this.games.get(gameId);
@@ -354,9 +364,23 @@ class GameManager {
         displayName: p.displayName,
         avatarUrl: p.avatarUrl,
         isPremium: p.isPremium,
+        online: !!p.online,
       })),
       scores: Object.fromEntries(game.scores),
       round: game.round,
+      currentRound: (game.currentRound && game.state !== 'finished') ? {
+        roundNumber: game.currentRound.roundNumber,
+        track: {
+          uri: game.currentRound.track.uri,
+          name: game.currentRound.track.name,
+          artists: game.currentRound.track.artists,
+          album: game.currentRound.track.album,
+          albumArt: game.currentRound.track.albumArt,
+          durationMs: game.currentRound.track.durationMs,
+        },
+        positionMs: game.currentRound.positionMs,
+        votingDeadline: game.currentRound.votingDeadline,
+      } : null,
     };
   }
 
@@ -382,9 +406,10 @@ class GameManager {
    */
   allVotesIn(gameId) {
     const game = this.games.get(gameId);
-    if (!game) return false;
+    if (!game || game.state !== 'voting') return false;
     const onlinePlayers = [...game.players.values()].filter(p => p.online);
-    if (onlinePlayers.length === 0) return false;
+    // Must have at least 2 active players before considering all votes legitimately in
+    if (onlinePlayers.length < 2) return false;
     return onlinePlayers.every(p => game.votes.has(p.id));
   }
 
