@@ -4,38 +4,46 @@
 const SPOTIFY_API = 'https://api.spotify.com/v1';
 
 /**
- * Generic Spotify API request with error handling
+ * Resilient Spotify API request with graceful error handling
  */
 async function spotifyFetch(token, endpoint, options = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `${SPOTIFY_API}${endpoint}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
 
-  if (res.status === 204) return null;
-  if (res.status === 401) throw new Error('SPOTIFY_TOKEN_EXPIRED');
-  if (res.status === 403) throw new Error('SPOTIFY_PREMIUM_REQUIRED');
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Spotify API error ${res.status}: ${body}`);
+    if (res.status === 204) return null;
+    if (res.status === 401) {
+      console.warn(`[SpotifyApi] 401 Unauthorized for ${endpoint}`);
+      return null;
+    }
+    if (res.status === 403) {
+      console.warn(`[SpotifyApi] 403 Forbidden for ${endpoint}`);
+      return null;
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`[SpotifyApi] HTTP ${res.status} on ${endpoint}: ${body.slice(0, 100)}`);
+      return null;
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.warn(`[SpotifyApi] Network error for ${endpoint}:`, err.message);
+    return null;
   }
-
-  return res.json();
 }
 
 /**
- * Paginate through all results from a Spotify list endpoint
- * @param {string} token
- * @param {string} endpoint - Initial endpoint
- * @param {string} itemsKey - Key in response containing items (default: 'items')
- * @param {number} maxItems - Safety cap to avoid infinite pagination
+ * Paginate through results from a Spotify list endpoint
  */
-async function paginateAll(token, endpoint, itemsKey = 'items', maxItems = 500) {
+async function paginateAll(token, endpoint, itemsKey = 'items', maxItems = 300) {
   const allItems = [];
   let url = endpoint.startsWith('http') ? endpoint : `${SPOTIFY_API}${endpoint}`;
 
@@ -61,23 +69,41 @@ async function getUserProfile(token) {
 // ─── Top Tracks (Frequently Used) ───
 
 async function getUserTopTracks(token) {
-  // Fetch from all time ranges and merge for broader coverage
-  const [short, medium, long] = await Promise.all([
+  const results = await Promise.allSettled([
     paginateAll(token, '/me/top/tracks?time_range=short_term&limit=50'),
     paginateAll(token, '/me/top/tracks?time_range=medium_term&limit=50'),
     paginateAll(token, '/me/top/tracks?time_range=long_term&limit=50'),
   ]);
 
-  // Deduplicate by track ID
   const seen = new Set();
   const tracks = [];
-  for (const track of [...short, ...medium, ...long]) {
-    if (track && track.id && !seen.has(track.id)) {
-      seen.add(track.id);
-      tracks.push(normalizeTrack(track));
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+      for (const track of r.value) {
+        if (track && track.id && !seen.has(track.id)) {
+          seen.add(track.id);
+          tracks.push(normalizeTrack(track));
+        }
+      }
     }
   }
+
   return tracks;
+}
+
+// ─── Liked Songs (Saved Tracks) ───
+
+async function getUserSavedTracks(token) {
+  try {
+    const items = await paginateAll(token, '/me/tracks?limit=50', 'items', 150);
+    return items
+      .filter(item => item && item.track && item.track.id)
+      .map(item => normalizeTrack(item.track));
+  } catch (err) {
+    console.warn('[SpotifyApi] /me/tracks error:', err.message);
+    return [];
+  }
 }
 
 // ─── User Playlists & Their Tracks ───
@@ -230,6 +256,7 @@ function normalizeTrack(track, albumOverride = null) {
 module.exports = {
   getUserProfile,
   getUserTopTracks,
+  getUserSavedTracks,
   getUserPlaylistTracks,
   getUserSavedAlbumTracks,
   getTrackDetails,

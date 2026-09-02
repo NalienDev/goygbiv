@@ -237,11 +237,18 @@ io.on('connection', (socket) => {
   // ── Submit Votes ──
   socket.on('submit-votes', (data, callback) => {
     const success = gameManager.submitVotes(data.gameId, currentPlayerId, data.votes);
+  // ── Submit Votes ──
+  socket.on('submit-votes', (data, callback) => {
+    const success = gameManager.submitVotes(data.gameId, currentPlayerId, data.votes);
     if (callback) callback({ success });
 
-    // Check if all votes are in
+    // If all active players have submitted, reveal after a brief 1.5s delay
     if (gameManager.allVotesIn(data.gameId)) {
-      doReveal(data.gameId);
+      const game = gameManager.getGame(data.gameId);
+      if (game && game.state === 'voting') {
+        clearGameTimers(game);
+        setTimeout(() => doReveal(data.gameId), 1500);
+      }
     }
   });
 
@@ -263,6 +270,21 @@ io.on('connection', (socket) => {
               playerId: pid,
               gameInfo: gameManager.getGameInfo(gid),
             });
+
+            // If game is in progress and only 1 player remains, end game
+            if (game.state !== 'lobby' && game.state !== 'finished') {
+              const activeCount = gameManager.getActivePlayerCount(gid);
+              if (activeCount < 2) {
+                clearGameTimers(game);
+                game.state = 'finished';
+                io.to(gid).emit('pause-playback');
+                io.to(gid).emit('game-over', {
+                  reason: 'not_enough_players',
+                  message: 'Game ended: A player left and there are not enough players to continue.',
+                  scoreboard: gameManager.getScoreboard(gid),
+                });
+              }
+            }
           }
         }
       }, 5000);
@@ -272,23 +294,51 @@ io.on('connection', (socket) => {
 
 // ─── Round Flow ───
 
+function clearGameTimers(game) {
+  if (!game) return;
+  if (game.listenTimeout) { clearTimeout(game.listenTimeout); game.listenTimeout = null; }
+  if (game.votingTimeout) { clearTimeout(game.votingTimeout); game.votingTimeout = null; }
+  if (game.revealTimeout) { clearTimeout(game.revealTimeout); game.revealTimeout = null; }
+}
+
 function startNewRound(gameId) {
-  const round = gameManager.nextRound(gameId);
-  if (!round) {
-    // No more songs or game finished
-    const game = gameManager.getGame(gameId);
-    if (game) {
-      const scoreboard = gameManager.getScoreboard(gameId);
-      io.to(gameId).emit('game-over', {
-        reason: 'no_more_songs',
-        scoreboard,
-        winner: scoreboard.length > 0 ? scoreboard[0] : null,
-      });
-    }
+  const game = gameManager.getGame(gameId);
+  if (!game || game.state === 'finished') return;
+
+  clearGameTimers(game);
+
+  // Check if at least 2 players are active
+  if (gameManager.getActivePlayerCount(gameId) < 2) {
+    game.state = 'finished';
+    io.to(gameId).emit('pause-playback');
+    io.to(gameId).emit('game-over', {
+      reason: 'not_enough_players',
+      message: 'Game ended: Not enough players to continue (minimum 2 players required).',
+      scoreboard: gameManager.getScoreboard(gameId),
+    });
     return;
   }
 
-  // Emit round info (without revealing who has the song)
+  const round = gameManager.nextRound(gameId);
+  if (!round) {
+    if (game.round <= 1 && [...game.scores.values()].every(s => s === 0)) {
+      console.warn(`[Game] Game ${gameId} ended immediately: 0 songs found in libraries`);
+      io.to(gameId).emit('game-error', {
+        message: 'No playable songs were found in the connected Spotify accounts! Make sure players have Liked Songs, public playlists, or listening history on Spotify.',
+      });
+      return;
+    }
+
+    const scoreboard = gameManager.getScoreboard(gameId);
+    io.to(gameId).emit('game-over', {
+      reason: 'no_more_songs',
+      scoreboard,
+      winner: scoreboard.length > 0 ? scoreboard[0] : null,
+    });
+    return;
+  }
+
+  // Emit round info
   io.to(gameId).emit('new-round', {
     roundNumber: round.roundNumber,
     track: {
@@ -302,46 +352,51 @@ function startNewRound(gameId) {
     positionMs: round.positionMs,
   });
 
-  // Tell each premium player to start playback on their device
-  const game = gameManager.getGame(gameId);
-  if (game) {
-    io.to(gameId).emit('play-track', {
-      uri: round.track.uri,
-      positionMs: round.positionMs,
-    });
-  }
+  // Start playback on premium player devices
+  io.to(gameId).emit('play-track', {
+    uri: round.track.uri,
+    positionMs: round.positionMs,
+  });
 
-  // After a short listen time (5 seconds), open voting
-  setTimeout(() => {
-    gameManager.startVoting(gameId, 15000);
+  // Open voting after a brief 2-second buffer for audio buffer
+  game.listenTimeout = setTimeout(() => {
+    const curG = gameManager.getGame(gameId);
+    if (!curG || curG.state === 'finished') return;
+
+    const votingTimeMs = (curG.settings.votingDuration || 20) * 1000;
+    gameManager.startVoting(gameId, votingTimeMs);
 
     const gameInfo = gameManager.getGameInfo(gameId);
     if (gameInfo) {
       io.to(gameId).emit('voting-phase', {
-        timeLimit: 15000,
+        timeLimit: votingTimeMs,
         players: gameInfo.players,
       });
 
-      // Auto-reveal after voting timer
-      setTimeout(() => {
-        const currentGame = gameManager.getGame(gameId);
-        if (currentGame && currentGame.state === 'voting') {
+      // Auto-reveal when voting time expires
+      curG.votingTimeout = setTimeout(() => {
+        const checkG = gameManager.getGame(gameId);
+        if (checkG && checkG.state === 'voting') {
           doReveal(gameId);
         }
-      }, 15000);
+      }, votingTimeMs);
     }
-  }, 5000);
+  }, 2000);
 }
 
 function doReveal(gameId) {
+  const game = gameManager.getGame(gameId);
+  if (!game) return;
+
+  clearGameTimers(game);
+
   const results = gameManager.revealResults(gameId);
   if (!results) return;
 
   // Pause playback for all players
-  const game = gameManager.getGame(gameId);
-  if (game) {
-    io.to(gameId).emit('pause-playback');
-  }
+  io.to(gameId).emit('pause-playback');
+
+  const revealSeconds = game.settings.revealDuration || 10;
 
   io.to(gameId).emit('reveal-results', {
     track: results.track,
@@ -349,10 +404,11 @@ function doReveal(gameId) {
     playerResults: results.playerResults,
     scoreboard: gameManager.getScoreboard(gameId),
     winner: results.winner,
+    revealDuration: revealSeconds,
   });
 
   if (results.winner) {
-    const winnerPlayer = game ? game.players.get(results.winner) : null;
+    const winnerPlayer = game.players.get(results.winner);
     io.to(gameId).emit('game-over', {
       reason: 'points_reached',
       winner: winnerPlayer ? {
@@ -364,8 +420,10 @@ function doReveal(gameId) {
       scoreboard: gameManager.getScoreboard(gameId),
     });
   } else {
-    // Move to next round after reveal delay
-    setTimeout(() => startNewRound(gameId), 7000);
+    // Keep results on screen for configured duration (default: 10s)
+    game.revealTimeout = setTimeout(() => {
+      startNewRound(gameId);
+    }, revealSeconds * 1000);
   }
 }
 

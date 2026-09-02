@@ -55,15 +55,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (socket) {
           socket.emit('update-device', { deviceId: activeDeviceId });
         }
+        refreshGameDevices();
       },
       (err) => {
         console.warn('[Game] Web Playback warning:', err.message);
         document.getElementById('playback-status-text').textContent = 'Device connected';
+        refreshGameDevices();
       }
     );
+    // Initial devices fetch
+    setTimeout(refreshGameDevices, 1000);
   } else {
     document.getElementById('playback-status-pill').style.opacity = '0.6';
     document.getElementById('playback-status-text').textContent = 'Free Account (No audio)';
+    const select = document.getElementById('game-device-select');
+    if (select) select.innerHTML = '<option value="">Audio disabled (Free)</option>';
   }
 
   // Connect socket
@@ -102,6 +108,9 @@ function rejoinGame() {
 function setupGameSocketListeners() {
   // New round started
   socket.on('new-round', async (data) => {
+    clearInterval(timerInterval);
+    resetTimerDisplay();
+
     currentRound = data.roundNumber;
     hasSubmittedVotes = false;
     selectedPlayerIds.clear();
@@ -125,12 +134,12 @@ function setupGameSocketListeners() {
 
     document.getElementById('album-art-container').classList.add('now-playing__art--spinning');
 
-    // Render voting cards (initially disabled until voting phase)
+    // Render voting cards (initially ready)
     renderVotingGrid(currentPlayers, false);
 
     const submitBtn = document.getElementById('btn-submit-votes');
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Listening... (Voting opens in a few seconds)';
+    submitBtn.textContent = 'Listening... (Voting opens in a second)';
     updateVoteCountHint();
 
     // Trigger local Spotify playback if premium
@@ -179,13 +188,30 @@ function setupGameSocketListeners() {
     }
   });
 
+  let revealCountdown = null;
+
   // Reveal results
   socket.on('reveal-results', (data) => {
     clearInterval(timerInterval);
+    clearInterval(revealCountdown);
     resetTimerDisplay();
 
     document.getElementById('phase-title').textContent = 'Round Over — Results!';
-    document.getElementById('phase-subtitle').textContent = 'Here is who actually listens to this track.';
+
+    const durationSec = data.revealDuration || 10;
+    let secondsLeft = durationSec;
+    const subTitle = document.getElementById('phase-subtitle');
+    subTitle.textContent = `Next round starts in ${secondsLeft}s...`;
+
+    revealCountdown = setInterval(() => {
+      secondsLeft--;
+      if (secondsLeft <= 0) {
+        clearInterval(revealCountdown);
+        subTitle.textContent = 'Loading next round...';
+      } else {
+        subTitle.textContent = `Next round starts in ${secondsLeft}s...`;
+      }
+    }, 1000);
 
     const submitBtn = document.getElementById('btn-submit-votes');
     submitBtn.disabled = true;
@@ -206,11 +232,20 @@ function setupGameSocketListeners() {
   // Game over
   socket.on('game-over', (data) => {
     clearInterval(timerInterval);
+    clearInterval(revealCountdown);
     if (user.isPremium) {
       getValidToken().then(t => t && pauseSpotifyPlaybackDirect(t));
     }
 
-    showWinnerScreen(data.winner, data.scoreboard);
+    showWinnerScreen(data.winner, data.scoreboard, data.reason, data.message);
+  });
+
+  // Game error (e.g. no songs in libraries)
+  socket.on('game-error', (data) => {
+    clearInterval(timerInterval);
+    document.getElementById('phase-title').textContent = '⚠️ No Songs Found';
+    document.getElementById('phase-subtitle').textContent = data.message || 'No playable tracks found';
+    showToast(data.message || 'No songs found in libraries');
   });
 
   // Player left
@@ -385,7 +420,7 @@ function applyRevealToCards(actualOwners, playerResults) {
     if (iVoted) {
       if (hasSong) {
         card.classList.add('correct');
-        badge.textContent = '+1 Correct! 🎧';
+        badge.textContent = '+2 Correct! 🎧';
         badge.className = 'vote-card__result vote-card__result--correct visible';
       } else {
         card.classList.add('wrong');
@@ -479,21 +514,113 @@ function renderScoreboardList(scoreboard, playerResults = null) {
 
 // ─── Winner Screen & Confetti ───
 
-function showWinnerScreen(winner, scoreboard) {
+function showWinnerScreen(winner, scoreboard, reason = null, message = null) {
   const overlay = document.getElementById('winner-overlay');
+  const crown = overlay.querySelector('.winner-crown');
+  const banner = overlay.querySelector('.heading-lg');
   const winnerName = document.getElementById('winner-name');
   const winnerScore = document.getElementById('winner-score');
 
-  if (winner) {
+  if (reason === 'not_enough_players') {
+    if (crown) crown.textContent = '👥';
+    if (banner) banner.textContent = 'GAME ENDED';
+    winnerName.textContent = 'Not Enough Players';
+    winnerScore.textContent = message || 'A player left the game. Minimum 2 players required to play.';
+  } else if (winner) {
+    if (crown) crown.textContent = '👑';
+    if (banner) banner.textContent = 'WINNER!';
     winnerName.textContent = winner.displayName;
     winnerScore.textContent = `Won with ${winner.score} points!`;
+    launchConfetti();
   } else if (scoreboard && scoreboard.length > 0) {
+    if (crown) crown.textContent = '👑';
+    if (banner) banner.textContent = 'GAME OVER';
     winnerName.textContent = scoreboard[0].displayName;
     winnerScore.textContent = `Top of the board with ${scoreboard[0].score} points!`;
+    launchConfetti();
   }
 
   overlay.classList.add('active');
-  launchConfetti();
+}
+
+// ─── Mid-Game Device Selection ───
+
+async function refreshGameDevices() {
+  if (!user || !user.isPremium) return;
+  const token = await getValidToken();
+  if (!token) return;
+
+  const select = document.getElementById('game-device-select');
+  if (!select) return;
+
+  const devices = await getAvailableDevices(token);
+  const webDeviceId = getWebPlayerDeviceId();
+
+  select.innerHTML = '';
+
+  if (webDeviceId) {
+    const opt = document.createElement('option');
+    opt.value = webDeviceId;
+    opt.textContent = `🌐 In-Browser`;
+    select.appendChild(opt);
+  }
+
+  devices.forEach(d => {
+    if (d.id !== webDeviceId) {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      const icon = d.type === 'Smartphone' ? '📱' : d.type === 'Computer' ? '💻' : '🔊';
+      opt.textContent = `${icon} ${d.name}`;
+      select.appendChild(opt);
+    }
+  });
+
+  if (select.options.length === 0) {
+    select.innerHTML = '<option value="">No devices found</option>';
+  } else {
+    if (activeDeviceId) {
+      select.value = activeDeviceId;
+    } else if (select.options[0]) {
+      activeDeviceId = select.options[0].value;
+    }
+  }
+}
+
+async function handleGameDeviceChange() {
+  const select = document.getElementById('game-device-select');
+  const newDeviceId = select.value;
+  if (!newDeviceId) return;
+
+  activeDeviceId = newDeviceId;
+  sessionStorage.setItem('selected_device_id', newDeviceId);
+
+  // Notify server of device change
+  if (socket) {
+    socket.emit('update-device', { deviceId: newDeviceId });
+  }
+
+  // Transfer playback immediately
+  const token = await getValidToken();
+  if (token) {
+    try {
+      await fetch(`https://api.spotify.com/v1/me/player`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          device_ids: [newDeviceId],
+          play: true,
+        }),
+      });
+    } catch (err) {
+      console.warn('[Game] Transfer error:', err);
+    }
+  }
+
+  const deviceName = select.options[select.selectedIndex]?.textContent || 'Device';
+  showToast(`Switched playback to ${deviceName}`);
 }
 
 function launchConfetti() {

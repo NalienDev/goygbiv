@@ -9,12 +9,20 @@ const spotifyApi = require('./spotifyApi');
  * @param {string[]} categories - Array of: 'top', 'playlists', 'albums'
  * @returns {Map<string, object>} Map of trackId → track object
  */
+/**
+ * Collect songs from a player's library filtered by selected categories
+ * @param {string} token - Spotify access token
+ * @param {string[]} categories - Array of: 'top', 'playlists', 'albums'
+ * @returns {Map<string, object>} Map of trackId → track object
+ */
 async function collectPlayerSongs(token, categories) {
   const trackMap = new Map();
   const fetchers = [];
 
   if (categories.includes('top')) {
     fetchers.push(spotifyApi.getUserTopTracks(token));
+    // Also include saved/liked songs as part of user favorites
+    fetchers.push(spotifyApi.getUserSavedTracks(token));
   }
   if (categories.includes('playlists')) {
     fetchers.push(spotifyApi.getUserPlaylistTracks(token));
@@ -23,12 +31,14 @@ async function collectPlayerSongs(token, categories) {
     fetchers.push(spotifyApi.getUserSavedAlbumTracks(token));
   }
 
-  const results = await Promise.all(fetchers);
+  const results = await Promise.allSettled(fetchers);
 
-  for (const tracks of results) {
-    for (const track of tracks) {
-      if (!trackMap.has(track.id)) {
-        trackMap.set(track.id, track);
+  for (const res of results) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      for (const track of res.value) {
+        if (track && track.id && !trackMap.has(track.id)) {
+          trackMap.set(track.id, track);
+        }
       }
     }
   }
@@ -42,23 +52,35 @@ async function collectPlayerSongs(token, categories) {
  * @returns {Map<string, object>} Map of trackId → track object
  */
 async function collectAllPlayerSongs(token) {
-  return collectPlayerSongs(token, ['top', 'playlists', 'albums']);
+  const trackMap = new Map();
+
+  const results = await Promise.allSettled([
+    spotifyApi.getUserTopTracks(token),
+    spotifyApi.getUserSavedTracks(token),
+    spotifyApi.getUserPlaylistTracks(token),
+    spotifyApi.getUserSavedAlbumTracks(token),
+  ]);
+
+  for (const res of results) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      for (const track of res.value) {
+        if (track && track.id && !trackMap.has(track.id)) {
+          trackMap.set(track.id, track);
+        }
+      }
+    }
+  }
+
+  return trackMap;
 }
 
 /**
  * Build the song library for all players in a game
- * Source player songs are filtered by game categories
- * All player songs (for matching) include ALL categories
- *
- * @param {object[]} players - Array of { id, token, ... }
- * @param {string[]} categories - Host-selected categories
- * @returns {{ filteredLibraries: Map, fullLibraries: Map }}
  */
 async function buildGameLibraries(players, categories) {
-  const filteredLibraries = new Map(); // playerId → Map<trackId, track>
-  const fullLibraries = new Map();     // playerId → Map<trackId, track>
+  const filteredLibraries = new Map();
+  const fullLibraries = new Map();
 
-  // Fetch in parallel per player (filtered + full)
   await Promise.all(players.map(async (player) => {
     try {
       const [filtered, full] = await Promise.all([
@@ -67,7 +89,7 @@ async function buildGameLibraries(players, categories) {
       ]);
       filteredLibraries.set(player.id, filtered);
       fullLibraries.set(player.id, full);
-      console.log(`[SongMatcher] ${player.displayName}: ${filtered.size} filtered, ${full.size} total tracks`);
+      console.log(`[SongMatcher] ${player.displayName}: ${filtered.size} filtered tracks, ${full.size} total tracks`);
     } catch (err) {
       console.error(`[SongMatcher] Failed to fetch library for ${player.displayName}:`, err.message);
       filteredLibraries.set(player.id, new Map());
@@ -81,28 +103,24 @@ async function buildGameLibraries(players, categories) {
 /**
  * Pick a random song for a round:
  * 1. Pick a random player
- * 2. Pick a random song from their FILTERED library
+ * 2. Pick a random song from their FILTERED library (or fallback to FULL library)
  * 3. Check which OTHER players also have that song in their FULL library
- *
- * @param {object[]} players
- * @param {Map} filteredLibraries
- * @param {Map} fullLibraries
- * @param {Set} usedTrackIds - Tracks already used this game
- * @param {number} maxAttempts - Max retries to find a suitable song
- * @returns {{ track, sourcePlayerId, matchingPlayerIds[] } | null}
  */
 function pickRoundSong(players, filteredLibraries, fullLibraries, usedTrackIds = new Set(), maxAttempts = 50) {
-  // Shuffle player order for fairness
   const shuffledPlayers = [...players].sort(() => Math.random() - 0.5);
 
+  // Attempt 1: Pick from filtered libraries
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Pick a random source player
     const sourcePlayer = shuffledPlayers[attempt % shuffledPlayers.length];
-    const sourceLibrary = filteredLibraries.get(sourcePlayer.id);
+    let sourceLibrary = filteredLibraries.get(sourcePlayer.id);
+
+    // Fallback to full library if filtered is empty
+    if (!sourceLibrary || sourceLibrary.size === 0) {
+      sourceLibrary = fullLibraries.get(sourcePlayer.id);
+    }
 
     if (!sourceLibrary || sourceLibrary.size === 0) continue;
 
-    // Pick a random track from their filtered library
     const trackIds = [...sourceLibrary.keys()].filter(id => !usedTrackIds.has(id));
     if (trackIds.length === 0) continue;
 
@@ -118,18 +136,34 @@ function pickRoundSong(players, filteredLibraries, fullLibraries, usedTrackIds =
       }
     }
 
-    // We need at least the source player to have it (they always do)
-    // but also check that at least someone has it
-    if (matchingPlayerIds.length > 0) {
+    if (!matchingPlayerIds.includes(sourcePlayer.id)) {
+      matchingPlayerIds.push(sourcePlayer.id);
+    }
+
+    return {
+      track,
+      sourcePlayerId: sourcePlayer.id,
+      matchingPlayerIds,
+    };
+  }
+
+  // Attempt 2: Fallback across all full libraries if all else fails
+  for (const player of shuffledPlayers) {
+    const lib = fullLibraries.get(player.id);
+    if (!lib || lib.size === 0) continue;
+    const trackIds = [...lib.keys()].filter(id => !usedTrackIds.has(id));
+    if (trackIds.length > 0) {
+      const trackId = trackIds[Math.floor(Math.random() * trackIds.length)];
+      const track = lib.get(trackId);
       return {
         track,
-        sourcePlayerId: sourcePlayer.id,
-        matchingPlayerIds, // All players who have this song (including source)
+        sourcePlayerId: player.id,
+        matchingPlayerIds: [player.id],
       };
     }
   }
 
-  return null; // Couldn't find a suitable song
+  return null;
 }
 
 module.exports = {

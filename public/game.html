@@ -22,6 +22,15 @@
       </div>
 
       <div class="flex-center gap-md">
+        <!-- In-Game Device Selector -->
+        <div id="midgame-device-box" class="flex-center gap-xs">
+          <label for="game-device-select" class="text-sm" style="color: var(--text-muted); font-size: 0.75rem;">Device:</label>
+          <select id="game-device-select" class="form-input" style="padding: 4px 8px; font-size: 0.8rem; border-radius: var(--radius-sm); max-width: 160px; height: 32px; background: var(--bg-card); cursor: pointer;" onchange="handleGameDeviceChange()">
+            <option value="">Loading devices...</option>
+          </select>
+          <button type="button" class="btn btn--ghost btn--sm" style="padding: 2px 6px; font-size: 0.75rem;" onclick="refreshGameDevices()" title="Refresh Spotify Devices">↻</button>
+        </div>
+
         <div id="playback-status-pill" class="settings-pill" style="display: flex; align-items: center; gap: 6px;">
           <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--clr-spotify);"></span>
           <span id="playback-status-text">Ready</span>
@@ -106,7 +115,7 @@
 
           <div class="flex-col gap-xs mt-sm" style="border-top: 1px solid var(--bg-glass-border); padding-top: var(--space-sm);">
             <div class="text-sm" style="color: var(--text-muted);">Scoring rules:</div>
-            <div class="text-sm" style="color: var(--clr-green);">+1 point for each correct person</div>
+            <div class="text-sm" style="color: var(--clr-green);">+2 points for each correct person</div>
             <div class="text-sm" style="color: var(--clr-red);">-1 point for each wrong person</div>
           </div>
         </div>

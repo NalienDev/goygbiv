@@ -2,6 +2,7 @@
 
 let selectedSongStart = 'beginning';
 let selectedPoints = 50;
+let selectedRevealDuration = 10;
 let selectedCategories = ['top', 'playlists', 'albums'];
 let selectedDeviceId = null;
 let socket = null;
@@ -68,6 +69,18 @@ function setupToggleGroups() {
       selectedPoints = parseInt(btn.dataset.value, 10);
     });
   });
+
+  // Results duration toggle
+  const revealGroup = document.getElementById('reveal-duration-group');
+  if (revealGroup) {
+    revealGroup.querySelectorAll('.toggle-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        revealGroup.querySelectorAll('.toggle-option').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedRevealDuration = parseInt(btn.dataset.value, 10);
+      });
+    });
+  }
 }
 
 function setupCategoryCheckboxes() {
@@ -192,6 +205,7 @@ async function handleCreateGame(e) {
     songStart: selectedSongStart,
     categories: selectedCategories,
     pointsToWin: selectedPoints,
+    revealDuration: selectedRevealDuration,
   };
 
   socket.emit('create-game', payload, (res) => {

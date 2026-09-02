@@ -20,7 +20,9 @@ class GameManager {
       settings: {
         songStart: settings.songStart || 'beginning',       // 'beginning' | 'middle'
         categories: settings.categories || ['top'],          // ['top', 'playlists', 'albums']
-        pointsToWin: settings.pointsToWin || 50,             // 30 | 50 | 75
+        pointsToWin: parseInt(settings.pointsToWin, 10) || 50, // 30 | 50 | 75
+        revealDuration: parseInt(settings.revealDuration, 10) || 10, // 5 | 10 | 15 (default: 10s)
+        votingDuration: parseInt(settings.votingDuration, 10) || 20, // default: 20s
       },
       state: 'lobby', // 'lobby' | 'loading' | 'playing' | 'voting' | 'reveal' | 'finished'
       players: new Map(), // playerId → player object
@@ -32,10 +34,13 @@ class GameManager {
       fullLibraries: null,
       votes: new Map(), // playerId → Set<votedPlayerId>
       createdAt: Date.now(),
+      roundTimeout: null,
+      votingTimeout: null,
+      revealTimeout: null,
     };
 
     this.games.set(gameId, game);
-    console.log(`[GameManager] Game ${gameId} created by host ${hostId}`);
+    console.log(`[GameManager] Game ${gameId} created by host ${hostId} (Reveal time: ${game.settings.revealDuration}s)`);
     return game;
   }
 
@@ -279,10 +284,10 @@ class GameManager {
 
       for (const votedId of votedIds) {
         if (actualOwners.has(votedId)) {
-          roundScore += 1;
+          roundScore += 2; // +2 points for correct guess
           details.push({ playerId: votedId, correct: true });
         } else {
-          roundScore -= 1;
+          roundScore -= 1; // -1 point for wrong guess
           details.push({ playerId: votedId, correct: false });
         }
       }
@@ -373,12 +378,23 @@ class GameManager {
   }
 
   /**
-   * Check if all players have voted
+   * Check if all currently active players have voted
    */
   allVotesIn(gameId) {
     const game = this.games.get(gameId);
     if (!game) return false;
-    return game.votes.size >= game.players.size;
+    const onlinePlayers = [...game.players.values()].filter(p => p.online);
+    if (onlinePlayers.length === 0) return false;
+    return onlinePlayers.every(p => game.votes.has(p.id));
+  }
+
+  /**
+   * Get number of online active players
+   */
+  getActivePlayerCount(gameId) {
+    const game = this.games.get(gameId);
+    if (!game) return 0;
+    return [...game.players.values()].filter(p => p.online).length;
   }
 
   /**
