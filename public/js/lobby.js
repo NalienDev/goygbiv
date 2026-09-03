@@ -162,33 +162,37 @@ function updateLobbyUI(gameInfo) {
   const playersList = document.getElementById('players-list');
   playersList.innerHTML = '';
 
-  const players = gameInfo.players || [];
+  const players = (gameInfo.players || []).filter(p => p.online !== false);
   document.getElementById('player-count-badge').textContent = `${players.length} Player${players.length === 1 ? '' : 's'} Connected`;
 
-  players.forEach(p => {
-    const card = document.createElement('div');
-    card.className = 'player-card';
+  if (players.length === 0) {
+    playersList.innerHTML = '<div class="text-sm text-center py-md" style="color: var(--text-muted);">Waiting for players to join...</div>';
+  } else {
+    players.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'player-card';
 
-    const isThisHost = (p.id === gameInfo.hostId);
-    const isMe = (p.id === user.id);
+      const isThisHost = (p.id === gameInfo.hostId);
+      const isMe = (p.id === user.id);
 
-    card.innerHTML = `
-      <div class="player-avatar">
-        ${p.avatarUrl ? `<img src="${p.avatarUrl}" alt="${p.displayName}">` : p.displayName.charAt(0).toUpperCase()}
-      </div>
-      <div class="player-info">
-        <div class="player-name">
-          ${escapeHtml(p.displayName)} ${isMe ? '<span class="text-sm" style="color: var(--clr-violet);">(You)</span>' : ''}
+      card.innerHTML = `
+        <div class="player-avatar">
+          ${p.avatarUrl ? `<img src="${p.avatarUrl}" alt="${p.displayName}">` : p.displayName.charAt(0).toUpperCase()}
         </div>
-        <div class="flex-center gap-xs mt-xs" style="justify-content: flex-start;">
-          ${isThisHost ? '<span class="player-badge player-badge--host">Host</span>' : ''}
-          ${p.isPremium ? '<span class="player-badge player-badge--premium">Premium</span>' : '<span class="player-badge" style="background: rgba(255,255,255,0.06); color: var(--text-muted);">Free</span>'}
+        <div class="player-info">
+          <div class="player-name">
+            ${escapeHtml(p.displayName)} ${isMe ? '<span class="text-sm" style="color: var(--clr-violet);">(You)</span>' : ''}
+          </div>
+          <div class="flex-center gap-xs mt-xs" style="justify-content: flex-start;">
+            ${isThisHost ? '<span class="player-badge player-badge--host">Host</span>' : ''}
+            ${p.isPremium ? '<span class="player-badge player-badge--premium">Premium</span>' : '<span class="player-badge" style="background: rgba(255,255,255,0.06); color: var(--text-muted);">Free</span>'}
+          </div>
         </div>
-      </div>
-    `;
+      `;
 
-    playersList.appendChild(card);
-  });
+      playersList.appendChild(card);
+    });
+  }
 
   // Host start game button state
   const startBtn = document.getElementById('start-game-btn');

@@ -280,6 +280,7 @@ io.on('connection', (socket) => {
     if (data && data.gameId && data.emoji) {
       io.to(data.gameId).emit('reaction-received', {
         emoji: data.emoji,
+        isMega: !!data.isMega,
         senderId: currentPlayerId,
       });
     }
@@ -307,37 +308,47 @@ io.on('connection', (socket) => {
           clearTimeout(game.disconnectTimers.get(pid));
         }
 
-        // Brief 2.5s grace period: allows fast page transitions (lobby -> game.html)
-        // without falsely displaying "player disconnected" to others in-game.
+        // Brief grace period (1.8s) before evaluating disconnect
         const timer = setTimeout(() => {
           if (game.disconnectTimers) game.disconnectTimers.delete(pid);
           const currentP = game.players.get(pid);
 
           // Only declare offline if the player still hasn't reconnected on a new socket
           if (currentP && (!currentP.socketId || currentP.socketId === sid)) {
-            gameManager.handleDisconnect(gid, pid, sid);
-            io.to(gid).emit('player-left', {
-              playerId: pid,
-              displayName: currentP.displayName,
-              gameInfo: gameManager.getGameInfo(gid),
-            });
+            if (game.state === 'lobby') {
+              // In lobby: explicitly remove player so they disappear visually from the room
+              gameManager.leaveGame(gid, pid);
+              io.to(gid).emit('player-left', {
+                playerId: pid,
+                displayName: currentP.displayName,
+                gameInfo: gameManager.getGameInfo(gid),
+              });
+            } else {
+              // In game: mark offline (with grace period for reconnecting)
+              gameManager.handleDisconnect(gid, pid, sid);
+              io.to(gid).emit('player-left', {
+                playerId: pid,
+                displayName: currentP.displayName,
+                gameInfo: gameManager.getGameInfo(gid),
+              });
 
-            // If game is in progress and fewer than 2 active players remain, end the game
-            if (game.state !== 'lobby' && game.state !== 'finished') {
-              const activeCount = gameManager.getActivePlayerCount(gid);
-              if (activeCount < 2) {
-                clearGameTimers(game);
-                game.state = 'finished';
-                io.to(gid).emit('pause-playback');
-                io.to(gid).emit('game-over', {
-                  reason: 'not_enough_players',
-                  message: 'Game ended: A player left and there are not enough players to continue (minimum 2 players required).',
-                  scoreboard: gameManager.getScoreboard(gid),
-                });
+              // If game is in progress and fewer than 2 active players remain, end the game
+              if (game.state !== 'finished') {
+                const activeCount = gameManager.getActivePlayerCount(gid);
+                if (activeCount < 2) {
+                  clearGameTimers(game);
+                  game.state = 'finished';
+                  io.to(gid).emit('pause-playback');
+                  io.to(gid).emit('game-over', {
+                    reason: 'not_enough_players',
+                    message: 'Game ended: A player left and there are not enough players to continue (minimum 2 players required).',
+                    scoreboard: gameManager.getScoreboard(gid),
+                  });
+                }
               }
             }
           }
-        }, 2500);
+        }, 1800);
 
         if (game.disconnectTimers) {
           game.disconnectTimers.set(pid, timer);

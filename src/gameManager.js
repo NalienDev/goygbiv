@@ -150,6 +150,12 @@ class GameManager {
     game.scores.delete(playerId);
     console.log(`[GameManager] Player ${playerId} removed from game ${gameId}`);
 
+    // If host left, transfer host role to next remaining player
+    if (game.hostId === playerId && game.players.size > 0) {
+      game.hostId = game.players.keys().next().value;
+      console.log(`[GameManager] Host transferred to ${game.hostId}`);
+    }
+
     // If no players left at all, clean up after grace period
     if (game.players.size === 0 && !game.cleanupTimer) {
       game.cleanupTimer = setTimeout(() => {

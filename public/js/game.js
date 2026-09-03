@@ -315,7 +315,11 @@ function setupGameSocketListeners() {
   // In-game emoji reaction received
   socket.on('reaction-received', (data) => {
     if (data && data.emoji) {
-      spawnReactionParticles(data.emoji);
+      if (data.isMega) {
+        spawnMegaReaction(data.emoji);
+      } else {
+        spawnReactionParticles(data.emoji);
+      }
     }
   });
 }
@@ -843,12 +847,20 @@ const EMOJI_CATEGORIES = {
     '🍵', '🥤', '🍕', '🍔', '🍟', '🌭', '🍿', '🥓', '🥞', '🧀', '🥗', '🥪',
     '🌮', '🌯', '🍜', '🍣', '🍩', '🍪', '🎂', '🍰', '🧁', '🍦', '🍫', '🍬', '🍭'
   ],
+  'Nature 🌿': [
+    '🌿', '🌱', '🌲', '🌳', '🌴', '🌵', '🌾', '🍀', '☘️', '🍁', '🍂', '🍃',
+    '🌸', '🌺', '🌹', '🌻', '🌼', '🌷', '🥀', '🪷', '💐', '🪴', '🍄', '🌰',
+    '☀️', '🌞', '🌙', '🌕', '⭐', '🌟', '✨', '⚡', '☄️', '🪐', '🌈', '🌊',
+    '💧', '❄️', '🌨️', '☃️', '⛈️', '🌩️', '🌧️', '🌦️', '☁️', '⛅', '🌤️', '💨',
+    '🌪️', '🌫️', '🌋', '🗻', '🏔️', '⛰️', '🏕️', '🏜️', '🏝️', '🏞️', '🏖️', '🌅',
+    '🌄', '🌌', '🪨', '🪵', '🔥', '🌍', '🌎', '🌏'
+  ],
   'Animals 🐾': [
     '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮',
     '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗',
-    '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐢', '🐍', '🦎', '🦖', '🐙',
-    '🦑', '🦀', '🐡', '🐠', '🐬', '🐳', '🦈', '🐊', '🐆', '🦓', '🦍', '🐘',
-    '🦘', '🌹', '🌻', '🌺', '🍀', '🍁'
+    '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐜', '🦟', '🐢', '🐍', '🦎',
+    '🦖', '🐙', '🦑', '🦀', '🐡', '🐠', '🐬', '🐳', '🦈', '🐊', '🐆', '🦓',
+    '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🦒', '🦘', '🦥', '🦦', '🦨', '🦔'
   ]
 };
 
@@ -890,20 +902,139 @@ function renderReactionButtons() {
     btn.type = 'button';
     btn.className = 'reaction-btn';
     btn.textContent = emoji;
-    btn.title = `Send ${emoji}`;
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      sendReaction(emoji);
-    });
+    btn.title = `Tap for stream, hold 1s for MEGA ${emoji}`;
+
+    let holdTimer = null;
+    let isMegaSent = false;
+    let holdStartTime = 0;
+
+    function startHold(e) {
+      isMegaSent = false;
+      holdStartTime = Date.now();
+      btn.classList.add('reaction-btn--charging');
+
+      // 1-second hold threshold triggers MEGA reaction
+      holdTimer = setTimeout(() => {
+        isMegaSent = true;
+        btn.classList.remove('reaction-btn--charging');
+        btn.classList.add('reaction-btn--discharged');
+        setTimeout(() => btn.classList.remove('reaction-btn--discharged'), 350);
+
+        if (navigator.vibrate) {
+          try { navigator.vibrate([60, 40, 90]); } catch {}
+        }
+
+        sendReaction(emoji, true);
+      }, 1000);
+    }
+
+    function endHold(e) {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      btn.classList.remove('reaction-btn--charging');
+
+      // If user released before the 1-second threshold, send normal stream reaction
+      if (!isMegaSent && holdStartTime > 0 && Date.now() - holdStartTime < 1000) {
+        sendReaction(emoji, false);
+      }
+      holdStartTime = 0;
+      isMegaSent = false;
+    }
+
+    function cancelHold() {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      btn.classList.remove('reaction-btn--charging');
+      holdStartTime = 0;
+      isMegaSent = false;
+    }
+
+    // Pointer events handle both mouse and touch seamlessly
+    btn.addEventListener('pointerdown', startHold);
+    btn.addEventListener('pointerup', endHold);
+    btn.addEventListener('pointerleave', cancelHold);
+    btn.addEventListener('pointercancel', cancelHold);
+
+    // Prevent context menu on long-press
+    btn.addEventListener('contextmenu', (e) => e.preventDefault());
+
     container.appendChild(btn);
   });
 }
 
-function sendReaction(emoji) {
+function sendReaction(emoji, isMega = false) {
   if (socket) {
-    socket.emit('send-reaction', { gameId, emoji });
+    socket.emit('send-reaction', { gameId, emoji, isMega });
   }
-  spawnReactionParticles(emoji);
+  if (isMega) {
+    spawnMegaReaction(emoji);
+  } else {
+    spawnReactionParticles(emoji);
+  }
+}
+
+function spawnMegaReaction(emoji) {
+  const container = document.getElementById('mega-reaction-container');
+  if (!container) return;
+
+  const item = document.createElement('div');
+  item.className = 'mega-emoji-item';
+
+  // Shockwave radial pulse
+  const shockwave = document.createElement('div');
+  shockwave.className = 'mega-shockwave';
+  item.appendChild(shockwave);
+
+  // Massive emoji display
+  const charEl = document.createElement('div');
+  charEl.className = 'mega-emoji-char';
+  charEl.textContent = emoji;
+  item.appendChild(charEl);
+
+  container.appendChild(item);
+
+  // Accompanying burst particles
+  spawnBurstParticles(emoji);
+
+  // Clean up element after animation
+  setTimeout(() => {
+    item.remove();
+  }, 2900);
+}
+
+function spawnBurstParticles(emoji) {
+  const container = document.getElementById('reaction-particles-container');
+  if (!container) return;
+
+  for (let i = 0; i < 14; i++) {
+    const p = document.createElement('span');
+    p.className = 'reaction-particle';
+    p.textContent = emoji;
+
+    const left = Math.random() * 50 + 25; // center burst
+    const size = Math.floor(Math.random() * 20 + 26);
+    const drift = Math.floor(Math.random() * 240 - 120);
+    const rot = Math.floor(Math.random() * 120 - 60);
+    const duration = (Math.random() * 0.9 + 1.7).toFixed(2);
+    const delay = (Math.random() * 0.25).toFixed(2);
+
+    p.style.left = `${left}%`;
+    p.style.fontSize = `${size}px`;
+    p.style.setProperty('--drift', `${drift}px`);
+    p.style.setProperty('--rot', `${rot}deg`);
+    p.style.setProperty('--duration', `${duration}s`);
+    p.style.animationDelay = `${delay}s`;
+
+    container.appendChild(p);
+
+    p.addEventListener('animationend', () => {
+      p.remove();
+    });
+  }
 }
 
 function spawnReactionParticles(emoji) {
