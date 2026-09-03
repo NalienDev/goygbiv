@@ -795,18 +795,71 @@ function showToast(message) {
 
 // ─── In-Game Emoji Reactions System ───
 
-const EMOJI_PALETTE = [
-  '🔥', '💀', '🎵', '🤯', '💃', '💩', '🤡', '🎸',
-  '⚡', '👏', '🎉', '🗑️', '👑', '😱', '🕺', '🍿',
-  '🎧', '🚀', '💔', '👀', '🎤', '🥳', '🍻', '❤️',
-  '😭', '🤢', '💯', '🤔', '🏆', '🙌', '🎶', '🧊'
-];
+const EMOJI_CATEGORIES = {
+  'Popular': [
+    '🔥', '💀', '🎵', '🤯', '💃', '💩', '🤡', '🎸', '⚡', '👏', '🎉', '🗑️',
+    '👑', '😱', '🕺', '🍿', '🎧', '🚀', '💔', '👀', '🎤', '🥳', '🍻', '❤️',
+    '😭', '🤢', '💯', '🤔', '🏆', '🙌', '🎶', '🧊', '🗿', '✨', '🎯', '🤌',
+    '🤐', '🤫', '😇', '🤠', '👽', '🤖', '👻', '💣', '💥'
+  ],
+  'Flags 🏁': [
+    '🇵🇹', '🇧🇷', '🇪🇸', '🇬🇧', '🇺🇸', '🇫🇷', '🇩🇪', '🇮🇹', '🇯🇵', '🇰🇷', '🇨🇦', '🇦🇺',
+    '🇲🇽', '🇦🇷', '🇨🇴', '🇨🇱', '🇵🇪', '🇳🇱', '🇧🇪', '🇨🇭', '🇸🇪', '🇳🇴', '🇩🇰', '🇫🇮',
+    '🇮🇪', '🇵🇱', '🇬🇷', '🇹🇷', '🇦🇹', '🇨🇿', '🇺🇦', '🇷🇴', '🇭🇺', '🇳🇿', '🇿🇦', '🇳🇬',
+    '🇪🇬', '🇲🇦', '🇦🇴', '🇲🇿', '🇨🇻', '🇮🇳', '🇵🇰', '🇨🇳', '🇮🇩', '🇵🇭', '🇻🇳', '🇹🇭',
+    '🇲🇾', '🇸🇬', '🇸🇦', '🇦🇪', '🇮🇱', '🇯🇲', '🇨🇺', '🇩🇴', '🇺🇾', '🇻🇪', '🇮🇸', '🏁',
+    '🚩', '🎌', '🏴‍☠️', '🏳️‍🌈', '🏳️‍⚧️', '🇪🇺', '🇺🇳'
+  ],
+  'Faces 😀': [
+    '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊',
+    '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😋', '😛', '😜', '🤪', '😝',
+    '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒',
+    '🙄', '😬', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢',
+    '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '🥸', '😎', '🤓',
+    '🧐', '😕', '😟', '🙁', '☹️', '😮', '😯', '😲', '😳', '🥺', '😦', '😧',
+    '😨', '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩', '😫',
+    '🥱', '😤', '😡', '😠', '🤬', '💀', '☠️', '💩', '🤡', '👹', '👺', '👻',
+    '👽', '👾', '🤖'
+  ],
+  'Music 🎵': [
+    '🎵', '🎶', '🎼', '🎧', '🎤', '🎙️', '🎚️', '🎛️', '📻', '🎸', '🎹', '🥁',
+    '🎷', '🎺', '🎻', '🪕', '🪗', '🔊', '🔉', '🔈', '🔇', '🔔', '🔕', '📣',
+    '📢', '💿', '📀', '📼'
+  ],
+  'Gestures 🤘': [
+    '👍', '👎', '👊', '✊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏',
+    '✌️', '🤘', '🤙', '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐️', '🖖',
+    '👋', '💪', '🖕', '🤌', '👂', '👃', '🧠', '🫀', '🫁', '👁️', '👀', '👅',
+    '👄', '💋'
+  ],
+  'Party 🎉': [
+    '🔥', '⚡', '💥', '🌟', '✨', '💫', '🎈', '🎆', '🎇', '🧨', '🎉', '🎊',
+    '🎃', '🎄', '🎀', '🎁', '🎫', '🎟️', '🏆', '🥇', '🥈', '🥉', '🏅', '🎖️',
+    '⚽', '🏀', '🏈', '⚾', '🎾', '🎱', '🏓', '🎯', '🎮', '🕹️', '🎲', '🧩',
+    '🎰', '🚗', '🏎️', '🚀', '🛸', '💎', '💣'
+  ],
+  'Food 🍕': [
+    '🍻', '🍺', '🥂', '🍷', '🥃', '🍸', '🍹', '🍾', '🍶', '🧃', '🧉', '☕',
+    '🍵', '🥤', '🍕', '🍔', '🍟', '🌭', '🍿', '🥓', '🥞', '🧀', '🥗', '🥪',
+    '🌮', '🌯', '🍜', '🍣', '🍩', '🍪', '🎂', '🍰', '🧁', '🍦', '🍫', '🍬', '🍭'
+  ],
+  'Animals 🐾': [
+    '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮',
+    '🐷', '🐸', '🐵', '🐔', '🐧', '🐦', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗',
+    '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐢', '🐍', '🦎', '🦖', '🐙',
+    '🦑', '🦀', '🐡', '🐠', '🐬', '🐳', '🦈', '🐊', '🐆', '🦓', '🦍', '🐘',
+    '🦘', '🌹', '🌻', '🌺', '🍀', '🍁'
+  ]
+};
+
+// Flattened list for search and random selection
+const ALL_EMOJIS = Array.from(new Set(Object.values(EMOJI_CATEGORIES).flat()));
 
 let activeReactions = ['🔥', '💀', '🎵', '🤯'];
 let selectedCustomSlot = 0;
+let currentEmojiCategory = 'Popular';
 
 function initReactions() {
-  // Load saved customization or generate 4 random emojis on first visit
   try {
     const saved = localStorage.getItem('goygbiv_reactions');
     if (saved) {
@@ -815,8 +868,7 @@ function initReactions() {
         activeReactions = parsed;
       }
     } else {
-      // Pick 4 random distinct emojis from palette
-      const shuffled = [...EMOJI_PALETTE].sort(() => 0.5 - Math.random());
+      const shuffled = [...EMOJI_CATEGORIES['Popular']].sort(() => 0.5 - Math.random());
       activeReactions = shuffled.slice(0, 4);
       localStorage.setItem('goygbiv_reactions', JSON.stringify(activeReactions));
     }
@@ -858,20 +910,19 @@ function spawnReactionParticles(emoji) {
   const container = document.getElementById('reaction-particles-container');
   if (!container) return;
 
-  const count = 18 + Math.floor(Math.random() * 8); // 18-25 small emojis
+  const count = 18 + Math.floor(Math.random() * 8);
 
   for (let i = 0; i < count; i++) {
     const p = document.createElement('span');
     p.className = 'reaction-particle';
     p.textContent = emoji;
 
-    // Randomize properties for a natural flow
-    const left = Math.random() * 88 + 6; // 6% to 94% across width
-    const size = Math.floor(Math.random() * 16 + 18); // 18px to 34px
-    const drift = Math.floor(Math.random() * 140 - 70); // -70px to +70px drift
-    const rot = Math.floor(Math.random() * 80 - 40); // -40deg to +40deg rotation
-    const duration = (Math.random() * 1.4 + 2.1).toFixed(2); // 2.1s - 3.5s
-    const delay = (Math.random() * 0.45).toFixed(2); // stagger up to 0.45s
+    const left = Math.random() * 88 + 6;
+    const size = Math.floor(Math.random() * 16 + 18);
+    const drift = Math.floor(Math.random() * 140 - 70);
+    const rot = Math.floor(Math.random() * 80 - 40);
+    const duration = (Math.random() * 1.4 + 2.1).toFixed(2);
+    const delay = (Math.random() * 0.45).toFixed(2);
 
     p.style.left = `${left}%`;
     p.style.fontSize = `${size}px`;
@@ -882,7 +933,6 @@ function spawnReactionParticles(emoji) {
 
     container.appendChild(p);
 
-    // Remove element on animation end
     p.addEventListener('animationend', () => {
       p.remove();
     });
@@ -894,13 +944,18 @@ function setupCustomizerModal() {
   const btnOpen = document.getElementById('btn-open-customize');
   const btnClose = document.getElementById('btn-close-customizer');
   const slotContainer = document.getElementById('reaction-slot-selector');
+  const tabsContainer = document.getElementById('emoji-category-tabs');
+  const searchInput = document.getElementById('emoji-search-input');
   const paletteContainer = document.getElementById('emoji-palette-grid');
 
   if (!modal || !btnOpen) return;
 
   btnOpen.addEventListener('click', () => {
     selectedCustomSlot = 0;
+    currentEmojiCategory = 'Popular';
+    if (searchInput) searchInput.value = '';
     renderCustomizerSlots();
+    renderCategoryTabs();
     renderCustomizerPalette();
     modal.classList.remove('hidden');
   });
@@ -916,6 +971,37 @@ function setupCustomizerModal() {
       modal.classList.add('hidden');
     }
   });
+
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.trim().toLowerCase();
+      if (q) {
+        // Search across all emojis
+        const matches = ALL_EMOJIS.filter(em => em.includes(q));
+        renderPaletteEmojis(matches);
+      } else {
+        renderCustomizerPalette();
+      }
+    });
+  }
+
+  function renderCategoryTabs() {
+    if (!tabsContainer) return;
+    tabsContainer.innerHTML = '';
+    Object.keys(EMOJI_CATEGORIES).forEach(cat => {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = `emoji-category-tab ${cat === currentEmojiCategory ? 'active' : ''}`;
+      tab.textContent = cat;
+      tab.addEventListener('click', () => {
+        currentEmojiCategory = cat;
+        if (searchInput) searchInput.value = '';
+        renderCategoryTabs();
+        renderCustomizerPalette();
+      });
+      tabsContainer.appendChild(tab);
+    });
+  }
 
   function renderCustomizerSlots() {
     if (!slotContainer) return;
@@ -935,9 +1021,20 @@ function setupCustomizerModal() {
   }
 
   function renderCustomizerPalette() {
+    const list = EMOJI_CATEGORIES[currentEmojiCategory] || EMOJI_CATEGORIES['Popular'];
+    renderPaletteEmojis(list);
+  }
+
+  function renderPaletteEmojis(emojis) {
     if (!paletteContainer) return;
     paletteContainer.innerHTML = '';
-    EMOJI_PALETTE.forEach(emoji => {
+
+    if (emojis.length === 0) {
+      paletteContainer.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; color: var(--text-muted); padding: var(--space-md);">No emojis found</div>';
+      return;
+    }
+
+    emojis.forEach(emoji => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'emoji-option-btn';
@@ -948,7 +1045,7 @@ function setupCustomizerModal() {
           localStorage.setItem('goygbiv_reactions', JSON.stringify(activeReactions));
         } catch {}
         renderReactionButtons();
-        // Advance to next slot for rapid customization
+        // Advance to next slot for easy 1-2-3-4 customization
         selectedCustomSlot = (selectedCustomSlot + 1) % 4;
         renderCustomizerSlots();
       });

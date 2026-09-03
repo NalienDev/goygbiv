@@ -291,18 +291,15 @@ io.on('connection', (socket) => {
     if (currentGameId && currentPlayerId) {
       const gid = currentGameId;
       const pid = currentPlayerId;
-      gameManager.handleDisconnect(gid, pid);
+      const sid = socket.id;
 
       const game = gameManager.getGame(gid);
       if (game) {
         const p = game.players.get(pid);
-        // Immediately notify room that player disconnected/went offline
-        if (p) {
-          io.to(gid).emit('player-left', {
-            playerId: pid,
-            displayName: p.displayName,
-            gameInfo: gameManager.getGameInfo(gid),
-          });
+        // If player already reconnected on a newer socket (e.g. navigated from lobby to game), ignore!
+        if (p && p.socketId && p.socketId !== sid) {
+          console.log(`[Socket] Stale disconnect ignored for ${p.displayName} (active: ${p.socketId}, closed: ${sid})`);
+          return;
         }
 
         // Clear previous disconnect timer if any
@@ -310,12 +307,22 @@ io.on('connection', (socket) => {
           clearTimeout(game.disconnectTimers.get(pid));
         }
 
-        // Grace period (10s) before evaluating game termination
+        // Brief 2.5s grace period: allows fast page transitions (lobby -> game.html)
+        // without falsely displaying "player disconnected" to others in-game.
         const timer = setTimeout(() => {
           if (game.disconnectTimers) game.disconnectTimers.delete(pid);
           const currentP = game.players.get(pid);
-          if (currentP && !currentP.online) {
-            // If game is in progress and fewer than 2 players remain, end the game
+
+          // Only declare offline if the player still hasn't reconnected on a new socket
+          if (currentP && (!currentP.socketId || currentP.socketId === sid)) {
+            gameManager.handleDisconnect(gid, pid, sid);
+            io.to(gid).emit('player-left', {
+              playerId: pid,
+              displayName: currentP.displayName,
+              gameInfo: gameManager.getGameInfo(gid),
+            });
+
+            // If game is in progress and fewer than 2 active players remain, end the game
             if (game.state !== 'lobby' && game.state !== 'finished') {
               const activeCount = gameManager.getActivePlayerCount(gid);
               if (activeCount < 2) {
@@ -330,7 +337,7 @@ io.on('connection', (socket) => {
               }
             }
           }
-        }, 10000);
+        }, 2500);
 
         if (game.disconnectTimers) {
           game.disconnectTimers.set(pid, timer);
@@ -437,8 +444,10 @@ function doReveal(gameId) {
   const results = gameManager.revealResults(gameId);
   if (!results) return;
 
-  // Pause playback for all players
-  io.to(gameId).emit('pause-playback');
+  // Only pause playback if game is finished / has a winner; otherwise keep song playing into results!
+  if (results.winner) {
+    io.to(gameId).emit('pause-playback');
+  }
 
   const revealSeconds = game.settings.revealDuration || 10;
 

@@ -30,8 +30,10 @@ class GameManager {
       round: 0,
       currentRound: null,
       usedTrackIds: new Set(),
+      usedSignatures: new Set(),
       filteredLibraries: null,
       fullLibraries: null,
+      savedAlbumIdsMap: null,
       votes: new Map(), // playerId → Set<votedPlayerId>
       createdAt: Date.now(),
       listenTimeout: null,
@@ -106,15 +108,21 @@ class GameManager {
   /**
    * Handle temporary socket disconnect (page navigation, refresh)
    */
-  handleDisconnect(gameId, playerId) {
+  handleDisconnect(gameId, playerId, socketId = null) {
     const game = this.games.get(gameId);
     if (!game) return;
 
     const player = game.players.get(playerId);
+    // Ignore stale disconnect if player is already active on a different socket
+    if (player && player.socketId && socketId && player.socketId !== socketId) {
+      console.log(`[GameManager] Ignoring stale disconnect for ${player.displayName}`);
+      return;
+    }
+
     if (player) {
       player.online = false;
       player.lastSeen = Date.now();
-      console.log(`[GameManager] Player ${player.displayName} marked offline (grace period)`);
+      console.log(`[GameManager] Player ${player.displayName} marked offline`);
     }
 
     // Check if ALL players are offline
@@ -189,13 +197,14 @@ class GameManager {
     console.log(`[GameManager] Loading libraries for game ${gameId}...`);
 
     const players = [...game.players.values()];
-    const { filteredLibraries, fullLibraries } = await songMatcher.buildGameLibraries(
+    const { filteredLibraries, fullLibraries, savedAlbumIdsMap } = await songMatcher.buildGameLibraries(
       players,
       game.settings.categories
     );
 
     game.filteredLibraries = filteredLibraries;
     game.fullLibraries = fullLibraries;
+    game.savedAlbumIdsMap = savedAlbumIdsMap;
     game.state = 'playing';
 
     console.log(`[GameManager] Game ${gameId} started!`);
@@ -219,7 +228,9 @@ class GameManager {
       players,
       game.filteredLibraries,
       game.fullLibraries,
-      game.usedTrackIds
+      game.savedAlbumIdsMap,
+      game.usedTrackIds,
+      game.usedSignatures
     );
 
     if (!result) {
@@ -229,6 +240,9 @@ class GameManager {
     }
 
     game.usedTrackIds.add(result.track.id);
+    if (result.signature) {
+      game.usedSignatures.add(result.signature);
+    }
 
     // Calculate start position
     let positionMs = 0;
@@ -446,8 +460,10 @@ class GameManager {
     game.round = 0;
     game.currentRound = null;
     game.usedTrackIds = new Set();
+    game.usedSignatures = new Set();
     game.filteredLibraries = null;
     game.fullLibraries = null;
+    game.savedAlbumIdsMap = null;
     game.votes = new Map();
     game.listenTimeout = null;
     game.votingTimeout = null;

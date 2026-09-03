@@ -234,6 +234,25 @@ async function transferPlayback(token, deviceId, play = false) {
   });
 }
 
+// ─── User Saved Album IDs ───
+
+async function getUserSavedAlbumIds(token) {
+  try {
+    const savedAlbums = await paginateAll(token, '/me/albums?limit=50', 'items', 100);
+    const albumIds = new Set();
+    for (const item of savedAlbums) {
+      const alb = item ? (item.album || item) : null;
+      if (alb && alb.id) {
+        albumIds.add(alb.id);
+      }
+    }
+    return albumIds;
+  } catch (err) {
+    console.warn('[SpotifyApi] /me/albums error:', err.message);
+    return new Set();
+  }
+}
+
 // ─── Helpers ───
 
 /**
@@ -247,6 +266,7 @@ function normalizeTrack(track, albumOverride = null) {
     name: track.name || 'Unknown Track',
     artists: (track.artists || []).map(a => a.name).join(', ') || 'Unknown Artist',
     album: album.name || 'Unknown Album',
+    albumId: album.id || null,
     albumArt: (album.images && album.images.length > 0) ? album.images[0].url : null,
     albumArtSmall: (album.images && album.images.length > 1) ? album.images[album.images.length - 1].url : null,
     durationMs: track.duration_ms || 0,
@@ -259,6 +279,7 @@ module.exports = {
   getUserSavedTracks,
   getUserPlaylistTracks,
   getUserSavedAlbumTracks,
+  getUserSavedAlbumIds,
   getTrackDetails,
   startPlayback,
   pausePlayback,
