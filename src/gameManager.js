@@ -61,7 +61,9 @@ class GameManager {
     if (!game) throw new Error('Game not found');
 
     const isExistingPlayer = game.players.has(player.id);
-    if (game.state !== 'lobby' && !isExistingPlayer) {
+    // Allow rejoining a finished game (players returning to lobby for rematch)
+    const allowJoin = game.state === 'lobby' || game.state === 'finished' || isExistingPlayer;
+    if (!allowJoin) {
       throw new Error('Game already started');
     }
 
@@ -344,6 +346,10 @@ class GameManager {
       playerResults,
       scores: Object.fromEntries(game.scores),
       winner,
+      // Map of voterId → [votedForId, ...] so clients can show who voted for whom at reveal
+      allVotes: Object.fromEntries(
+        [...game.votes].map(([k, v]) => [k, [...v]])
+      ),
     };
   }
 
@@ -420,6 +426,41 @@ class GameManager {
     const game = this.games.get(gameId);
     if (!game) return 0;
     return [...game.players.values()].filter(p => p.online).length;
+  }
+
+  /**
+   * Reset a finished game back to lobby state for a rematch.
+   * Keeps the same players but wipes scores, rounds, and song history.
+   */
+  resetGame(gameId) {
+    const game = this.games.get(gameId);
+    if (!game) throw new Error('Game not found');
+
+    // Clear all round/voting timers
+    if (game.listenTimeout) clearTimeout(game.listenTimeout);
+    if (game.votingTimeout) clearTimeout(game.votingTimeout);
+    if (game.earlyRevealTimeout) clearTimeout(game.earlyRevealTimeout);
+    if (game.revealTimeout) clearTimeout(game.revealTimeout);
+
+    game.state = 'lobby';
+    game.round = 0;
+    game.currentRound = null;
+    game.usedTrackIds = new Set();
+    game.filteredLibraries = null;
+    game.fullLibraries = null;
+    game.votes = new Map();
+    game.listenTimeout = null;
+    game.votingTimeout = null;
+    game.earlyRevealTimeout = null;
+    game.revealTimeout = null;
+
+    // Reset all scores to 0
+    for (const playerId of game.scores.keys()) {
+      game.scores.set(playerId, 0);
+    }
+
+    console.log(`[GameManager] Game ${gameId} reset to lobby for rematch`);
+    return game;
   }
 
   /**

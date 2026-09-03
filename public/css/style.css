@@ -1313,3 +1313,34 @@ a:hover {
   text-align: center;
   font-weight: 500;
 }
+
+/* ─── Voter Chips (reveal phase: who voted for whom) ─── */
+.vote-card__voters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: center;
+  margin-top: var(--space-xs);
+}
+
+.voter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(168, 85, 247, 0.25);
+  border: 1px solid rgba(168, 85, 247, 0.5);
+  color: var(--clr-violet);
+  font-size: 0.65rem;
+  font-weight: 700;
+  cursor: default;
+  transition: transform 0.15s ease;
+}
+
+.voter-chip:hover {
+  transform: scale(1.2);
+  background: rgba(168, 85, 247, 0.45);
+}
+

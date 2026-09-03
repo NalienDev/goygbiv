@@ -88,7 +88,7 @@
           </div>
 
           <!-- Submit Votes Button -->
-          <button id="btn-submit-votes" class="btn btn--rainbow btn--lg w-full mt-sm" onclick="handleSubmitVotes()" disabled>
+          <button id="btn-submit-votes" class="btn btn--rainbow btn--lg w-full mt-sm" onclick="handleSubmitVotes()" disabled style="display:none">
             Lock In Votes
           </button>
         </div>
@@ -129,8 +129,8 @@
     <div class="heading-lg" style="color: var(--clr-yellow); letter-spacing: 0.1em;">WINNER!</div>
     <div id="winner-name" class="winner-name">Player Name</div>
     <div id="winner-score" class="winner-score">Reached 50 Points!</div>
-    <button class="btn btn--rainbow btn--lg mt-xl" onclick="window.location.href='/'">
-      Back to Home
+    <button class="btn btn--rainbow btn--lg mt-xl" onclick="window.location.href='/lobby.html?game=' + (new URLSearchParams(window.location.search).get('game'))">
+      Back to Lobby
     </button>
   </div>
 

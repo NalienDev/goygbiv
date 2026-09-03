@@ -49,12 +49,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       async () => await getValidToken(),
       (deviceId) => {
         console.log('[Game] Web Playback SDK ready with ID:', deviceId);
-        if (!activeDeviceId) {
-          activeDeviceId = deviceId;
-        }
+        // Don't auto-select in-browser device — user should pick a real Spotify device
         document.getElementById('playback-status-text').textContent = 'Audio ready';
         if (socket) {
-          socket.emit('update-device', { deviceId: activeDeviceId });
+          socket.emit('update-device', { deviceId: activeDeviceId || deviceId });
         }
         refreshGameDevices();
       },
@@ -202,6 +200,7 @@ function setupGameSocketListeners() {
     renderVotingGrid(currentPlayers, true);
 
     const submitBtn = document.getElementById('btn-submit-votes');
+    submitBtn.style.display = 'none';
     submitBtn.disabled = false;
     submitBtn.textContent = 'Lock In Votes';
 
@@ -245,6 +244,7 @@ function setupGameSocketListeners() {
 
     const submitBtn = document.getElementById('btn-submit-votes');
     submitBtn.disabled = true;
+    submitBtn.style.display = 'none';
     submitBtn.textContent = 'Round Complete';
 
     // Update scoreboard
@@ -254,6 +254,11 @@ function setupGameSocketListeners() {
 
     // Reveal on player cards
     applyRevealToCards(data.actualOwners, data.playerResults);
+
+    // Show who voted for whom on the cards
+    if (data.allVotes) {
+      showVotesOnCards(data.allVotes);
+    }
 
     // Show breakdown summary card
     showRevealSummary(data.track, data.actualOwners, data.playerResults);
@@ -279,11 +284,19 @@ function setupGameSocketListeners() {
     showToast(data.message || 'No songs found in libraries');
   });
 
-  // Player left
+  // Player left / disconnected
   socket.on('player-left', (data) => {
+    const name = data.displayName || 'A player';
+    showToast(`⚠️ ${name} disconnected`);
     if (data.gameInfo) {
       currentPlayers = data.gameInfo.players;
       updateScoreboard(data.gameInfo.players, data.gameInfo.scores);
+    }
+    // Dim that player's vote card if visible
+    const card = document.querySelector(`.vote-card[data-player-id="${data.playerId}"]`);
+    if (card) {
+      card.style.opacity = '0.4';
+      card.title = `${name} disconnected`;
     }
   });
 }
@@ -369,6 +382,11 @@ function togglePlayerVote(playerId, cardElement) {
 function updateVoteCountHint() {
   const count = selectedPlayerIds.size;
   document.getElementById('vote-count-hint').textContent = `${count} selected`;
+  // Show Lock In button only when at least 1 player is selected
+  const submitBtn = document.getElementById('btn-submit-votes');
+  if (!hasSubmittedVotes) {
+    submitBtn.style.display = count >= 1 ? 'block' : 'none';
+  }
 }
 
 function handleSubmitVotes() {
@@ -574,6 +592,51 @@ function showWinnerScreen(winner, scoreboard, reason = null, message = null) {
   overlay.classList.add('active');
 }
 
+// ─── Who Voted For Whom (shown at reveal) ───
+
+/**
+ * Render voter chips on each vote card during the reveal phase.
+ * allVotes: { [voterId]: [votedForId, ...] }
+ */
+function showVotesOnCards(allVotes) {
+  // Build inverted index: votedForId → [voterDisplayName, ...]
+  const votedForMap = new Map(); // votedForId → Set<voterName>
+
+  for (const [voterId, votedForIds] of Object.entries(allVotes)) {
+    const voter = currentPlayers.find(p => p.id === voterId);
+    const voterName = voter ? voter.displayName : '?';
+    for (const votedForId of votedForIds) {
+      if (!votedForMap.has(votedForId)) votedForMap.set(votedForId, []);
+      votedForMap.get(votedForId).push(voterName);
+    }
+  }
+
+  // Attach voter chips to each vote card
+  document.querySelectorAll('.vote-card').forEach(card => {
+    const pid = card.dataset.playerId;
+    const voters = votedForMap.get(pid) || [];
+
+    // Remove existing chips if any
+    card.querySelectorAll('.vote-card__voters').forEach(el => el.remove());
+
+    if (voters.length === 0) return;
+
+    const chipsEl = document.createElement('div');
+    chipsEl.className = 'vote-card__voters';
+    chipsEl.title = `Voted by: ${voters.join(', ')}`;
+
+    voters.forEach(name => {
+      const chip = document.createElement('span');
+      chip.className = 'voter-chip';
+      chip.textContent = name.charAt(0).toUpperCase();
+      chip.title = name;
+      chipsEl.appendChild(chip);
+    });
+
+    card.appendChild(chipsEl);
+  });
+}
+
 // ─── Mid-Game Device Selection ───
 
 async function refreshGameDevices() {
@@ -589,13 +652,7 @@ async function refreshGameDevices() {
 
   select.innerHTML = '';
 
-  if (webDeviceId) {
-    const opt = document.createElement('option');
-    opt.value = webDeviceId;
-    opt.textContent = `🌐 In-Browser`;
-    select.appendChild(opt);
-  }
-
+  // Only show real Spotify Connect devices — skip the in-browser GOYGBIV player
   devices.forEach(d => {
     if (d.id !== webDeviceId) {
       const opt = document.createElement('option');
@@ -607,7 +664,7 @@ async function refreshGameDevices() {
   });
 
   if (select.options.length === 0) {
-    select.innerHTML = '<option value="">No devices found</option>';
+    select.innerHTML = '<option value="">No devices found — open Spotify on a device</option>';
   } else {
     if (activeDeviceId) {
       select.value = activeDeviceId;

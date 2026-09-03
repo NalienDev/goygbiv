@@ -54,6 +54,9 @@ const CLIENT_IDS = (process.env.SPOTIFY_CLIENT_IDS || '')
 const clientIdUsage = new Map(); // clientId → Set<spotifyUserId>
 CLIENT_IDS.forEach(id => clientIdUsage.set(id, new Set()));
 
+// Spotify Development Mode allows up to 5 users per app
+const MAX_USERS_PER_CLIENT_ID = 5;
+
 // ─── Middleware ───
 
 app.use(express.json());
@@ -67,18 +70,24 @@ app.get('/api/client-id', (req, res) => {
     return res.status(500).json({ error: 'No Spotify Client IDs configured' });
   }
 
-  // Find the Client ID with the fewest users
-  let bestId = CLIENT_IDS[0];
-  let bestCount = Infinity;
-
-  for (const [id, users] of clientIdUsage) {
-    if (users.size < bestCount) {
-      bestCount = users.size;
-      bestId = id;
+  // Fill each Client ID up to the 5-user Spotify limit before moving to the next.
+  // This avoids the previous "fewest users" round-robin which would alternate
+  // users between IDs after a server restart, causing 403s for users only
+  // registered on a specific app in the Spotify Developer Dashboard.
+  let selectedId = null;
+  for (const id of CLIENT_IDS) {
+    const users = clientIdUsage.get(id);
+    if (users.size < MAX_USERS_PER_CLIENT_ID) {
+      selectedId = id;
+      break;
     }
   }
 
-  res.json({ clientId: bestId });
+  if (!selectedId) {
+    return res.status(503).json({ error: 'All Spotify Client IDs are full (5 users each). Add more Client IDs to SPOTIFY_CLIENT_IDS.' });
+  }
+
+  res.json({ clientId: selectedId });
 });
 
 // Register a user against a Client ID (called after successful auth)
@@ -223,6 +232,11 @@ io.on('connection', (socket) => {
       const game = gameManager.getGame(data.gameId);
       if (!game) throw new Error('Game not found');
       if (game.hostId !== currentPlayerId) throw new Error('Only the host can start the game');
+
+      // If returning from a finished game (rematch), reset first
+      if (game.state === 'finished') {
+        gameManager.resetGame(data.gameId);
+      }
 
       // Notify players that libraries are loading
       io.to(data.gameId).emit('game-loading', { message: 'Loading everyone\'s music libraries...' });
@@ -418,6 +432,7 @@ function doReveal(gameId) {
     track: results.track,
     actualOwners: results.actualOwners,
     playerResults: results.playerResults,
+    allVotes: results.allVotes,
     scoreboard: gameManager.getScoreboard(gameId),
     winner: results.winner,
     revealDuration: revealSeconds,

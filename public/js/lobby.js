@@ -101,7 +101,8 @@ function setupSocketListeners() {
     if (data.gameInfo) {
       updateLobbyUI(data.gameInfo);
     }
-    showToast('A player left the lobby');
+    const name = data.displayName || 'A player';
+    showToast(`${name} left the lobby`);
   });
 
   socket.on('game-loading', (data) => {
@@ -207,7 +208,7 @@ async function setupLobbyDevices(token) {
     async () => await getValidToken(),
     (deviceId) => {
       console.log('[Lobby] In-browser player ready:', deviceId);
-      selectedDeviceId = deviceId;
+      // Don't auto-select the in-browser device — let user pick a real device
       notifyDeviceUpdate(deviceId);
       refreshLobbyDevices();
     },
@@ -230,18 +231,12 @@ async function refreshLobbyDevices() {
 
   select.innerHTML = '';
 
-  if (webDeviceId) {
-    const opt = document.createElement('option');
-    opt.value = webDeviceId;
-    opt.textContent = `🌐 In-Browser Player (GOYGBIV)`;
-    select.appendChild(opt);
-  }
-
+  // Only show real Spotify Connect devices — skip the in-browser GOYGBIV player
   devices.forEach(d => {
     if (d.id !== webDeviceId) {
       const opt = document.createElement('option');
       opt.value = d.id;
-      opt.textContent = `${d.type === 'Smartphone' ? '📱' : d.type === 'Computer' ? '💻' : '🔊'} ${d.name} (${d.type})`;
+      opt.textContent = `${d.type === 'Smartphone' ? '📱' : d.type === 'Computer' ? '💻' : '🔊'} ${d.name}`;
       select.appendChild(opt);
     }
   });
@@ -249,7 +244,7 @@ async function refreshLobbyDevices() {
   if (select.options.length === 0) {
     const opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = 'No active Spotify devices found';
+    opt.textContent = 'No active Spotify devices found — open Spotify on a device';
     select.appendChild(opt);
   } else {
     if (selectedDeviceId) select.value = selectedDeviceId;
