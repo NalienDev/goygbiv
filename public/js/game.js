@@ -83,6 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   setupGameSocketListeners();
+  initReactions();
 });
 
 function rejoinGame() {
@@ -289,16 +290,56 @@ function setupGameSocketListeners() {
     const name = data.displayName || 'A player';
     showToast(`⚠️ ${name} disconnected`);
     if (data.gameInfo) {
-      currentPlayers = data.gameInfo.players;
-      updateScoreboard(data.gameInfo.players, data.gameInfo.scores);
+      currentPlayers = data.gameInfo.players || [];
+      updateScoreboard(currentPlayers, data.gameInfo.scores);
     }
-    // Dim that player's vote card if visible
-    const card = document.querySelector(`.vote-card[data-player-id="${data.playerId}"]`);
-    if (card) {
-      card.style.opacity = '0.4';
-      card.title = `${name} disconnected`;
+    if (data.playerId) {
+      markPlayerDisconnected(data.playerId, name);
     }
   });
+
+  // Player rejoined / reconnected
+  socket.on('player-joined', (data) => {
+    if (data.player) {
+      showToast(`🟢 ${data.player.displayName} reconnected`);
+    }
+    if (data.gameInfo) {
+      currentPlayers = data.gameInfo.players || [];
+      updateScoreboard(currentPlayers, data.gameInfo.scores);
+    }
+    if (data.player && data.player.id) {
+      markPlayerConnected(data.player.id);
+    }
+  });
+
+  // In-game emoji reaction received
+  socket.on('reaction-received', (data) => {
+    if (data && data.emoji) {
+      spawnReactionParticles(data.emoji);
+    }
+  });
+}
+
+function markPlayerDisconnected(playerId, name = '') {
+  const card = document.querySelector(`.vote-card[data-player-id="${playerId}"]`);
+  if (card) {
+    card.classList.add('vote-card--disconnected');
+    card.title = `${name || 'Player'} disconnected`;
+    const nameEl = card.querySelector('.vote-card__name');
+    if (nameEl && !card.querySelector('.offline-badge')) {
+      nameEl.insertAdjacentHTML('beforeend', ' <span class="offline-badge">🔌 Offline</span>');
+    }
+  }
+}
+
+function markPlayerConnected(playerId) {
+  const card = document.querySelector(`.vote-card[data-player-id="${playerId}"]`);
+  if (card) {
+    card.classList.remove('vote-card--disconnected');
+    card.title = '';
+    const badge = card.querySelector('.offline-badge');
+    if (badge) badge.remove();
+  }
 }
 
 // ─── Playback Helper ───
@@ -345,6 +386,12 @@ function renderVotingGrid(players, enableVoting = false) {
     card.className = 'vote-card';
     card.dataset.playerId = p.id;
 
+    const isOffline = (p.online === false);
+    if (isOffline) {
+      card.classList.add('vote-card--disconnected');
+      card.title = `${p.displayName} is disconnected`;
+    }
+
     if (selectedPlayerIds.has(p.id)) {
       card.classList.add('selected');
     }
@@ -353,11 +400,13 @@ function renderVotingGrid(players, enableVoting = false) {
       <div class="vote-card__avatar">
         ${p.avatarUrl ? `<img src="${p.avatarUrl}" alt="${p.displayName}">` : p.displayName.charAt(0).toUpperCase()}
       </div>
-      <div class="vote-card__name">${escapeHtml(p.displayName)}</div>
+      <div class="vote-card__name">
+        ${escapeHtml(p.displayName)}${isOffline ? ' <span class="offline-badge">🔌 Offline</span>' : ''}
+      </div>
       <div class="vote-card__result" id="result-badge-${p.id}"></div>
     `;
 
-    if (enableVoting && !hasSubmittedVotes) {
+    if (enableVoting && !hasSubmittedVotes && !isOffline) {
       card.addEventListener('click', () => {
         if (hasSubmittedVotes) return;
         togglePlayerVote(p.id, card);
@@ -520,6 +569,7 @@ function updateScoreboard(players, scores = {}) {
     id: p.id,
     displayName: p.displayName,
     avatarUrl: p.avatarUrl,
+    online: p.online !== undefined ? p.online : true,
     score: scores[p.id] || 0,
   })).sort((a, b) => b.score - a.score);
 
@@ -533,6 +583,9 @@ function renderScoreboardList(scoreboard, playerResults = null) {
   scoreboard.forEach((entry, idx) => {
     const row = document.createElement('div');
     row.className = 'scoreboard__entry';
+    if (entry.online === false) {
+      row.classList.add('scoreboard__entry--offline');
+    }
 
     const isMe = (entry.id === user.id);
     const result = playerResults ? playerResults[entry.id] : null;
@@ -552,7 +605,7 @@ function renderScoreboardList(scoreboard, playerResults = null) {
       <div class="player-avatar" style="width: 28px; height: 28px; font-size: 0.75rem;">
         ${entry.avatarUrl ? `<img src="${entry.avatarUrl}" alt="${entry.displayName}">` : entry.displayName.charAt(0).toUpperCase()}
       </div>
-      <span class="scoreboard__name">${escapeHtml(entry.displayName)}${isMe ? ' <small style="color:var(--clr-violet)">(You)</small>' : ''}</span>
+      <span class="scoreboard__name">${escapeHtml(entry.displayName)}${isMe ? ' <small style="color:var(--clr-violet)">(You)</small>' : ''}${entry.online === false ? ' <small style="color:var(--clr-red); font-size:0.7rem; font-weight:600;">(Offline)</small>' : ''}</span>
       ${deltaHtml}
       <span class="scoreboard__score">${entry.score}</span>
     `;
@@ -738,4 +791,168 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.add('visible');
   setTimeout(() => toast.classList.remove('visible'), 3000);
+}
+
+// ─── In-Game Emoji Reactions System ───
+
+const EMOJI_PALETTE = [
+  '🔥', '💀', '🎵', '🤯', '💃', '💩', '🤡', '🎸',
+  '⚡', '👏', '🎉', '🗑️', '👑', '😱', '🕺', '🍿',
+  '🎧', '🚀', '💔', '👀', '🎤', '🥳', '🍻', '❤️',
+  '😭', '🤢', '💯', '🤔', '🏆', '🙌', '🎶', '🧊'
+];
+
+let activeReactions = ['🔥', '💀', '🎵', '🤯'];
+let selectedCustomSlot = 0;
+
+function initReactions() {
+  // Load saved customization or generate 4 random emojis on first visit
+  try {
+    const saved = localStorage.getItem('goygbiv_reactions');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length === 4) {
+        activeReactions = parsed;
+      }
+    } else {
+      // Pick 4 random distinct emojis from palette
+      const shuffled = [...EMOJI_PALETTE].sort(() => 0.5 - Math.random());
+      activeReactions = shuffled.slice(0, 4);
+      localStorage.setItem('goygbiv_reactions', JSON.stringify(activeReactions));
+    }
+  } catch {
+    activeReactions = ['🔥', '💀', '🎵', '🤯'];
+  }
+
+  renderReactionButtons();
+  setupCustomizerModal();
+}
+
+function renderReactionButtons() {
+  const container = document.getElementById('reaction-buttons-wrap');
+  if (!container) return;
+  container.innerHTML = '';
+
+  activeReactions.forEach(emoji => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'reaction-btn';
+    btn.textContent = emoji;
+    btn.title = `Send ${emoji}`;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      sendReaction(emoji);
+    });
+    container.appendChild(btn);
+  });
+}
+
+function sendReaction(emoji) {
+  if (socket) {
+    socket.emit('send-reaction', { gameId, emoji });
+  }
+  spawnReactionParticles(emoji);
+}
+
+function spawnReactionParticles(emoji) {
+  const container = document.getElementById('reaction-particles-container');
+  if (!container) return;
+
+  const count = 18 + Math.floor(Math.random() * 8); // 18-25 small emojis
+
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('span');
+    p.className = 'reaction-particle';
+    p.textContent = emoji;
+
+    // Randomize properties for a natural flow
+    const left = Math.random() * 88 + 6; // 6% to 94% across width
+    const size = Math.floor(Math.random() * 16 + 18); // 18px to 34px
+    const drift = Math.floor(Math.random() * 140 - 70); // -70px to +70px drift
+    const rot = Math.floor(Math.random() * 80 - 40); // -40deg to +40deg rotation
+    const duration = (Math.random() * 1.4 + 2.1).toFixed(2); // 2.1s - 3.5s
+    const delay = (Math.random() * 0.45).toFixed(2); // stagger up to 0.45s
+
+    p.style.left = `${left}%`;
+    p.style.fontSize = `${size}px`;
+    p.style.setProperty('--drift', `${drift}px`);
+    p.style.setProperty('--rot', `${rot}deg`);
+    p.style.setProperty('--duration', `${duration}s`);
+    p.style.animationDelay = `${delay}s`;
+
+    container.appendChild(p);
+
+    // Remove element on animation end
+    p.addEventListener('animationend', () => {
+      p.remove();
+    });
+  }
+}
+
+function setupCustomizerModal() {
+  const modal = document.getElementById('emoji-customizer-modal');
+  const btnOpen = document.getElementById('btn-open-customize');
+  const btnClose = document.getElementById('btn-close-customizer');
+  const slotContainer = document.getElementById('reaction-slot-selector');
+  const paletteContainer = document.getElementById('emoji-palette-grid');
+
+  if (!modal || !btnOpen) return;
+
+  btnOpen.addEventListener('click', () => {
+    selectedCustomSlot = 0;
+    renderCustomizerSlots();
+    renderCustomizerPalette();
+    modal.classList.remove('hidden');
+  });
+
+  if (btnClose) {
+    btnClose.addEventListener('click', () => {
+      modal.classList.add('hidden');
+    });
+  }
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.classList.add('hidden');
+    }
+  });
+
+  function renderCustomizerSlots() {
+    if (!slotContainer) return;
+    slotContainer.innerHTML = '';
+    activeReactions.forEach((emoji, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `reaction-slot-btn ${idx === selectedCustomSlot ? 'active' : ''}`;
+      btn.textContent = emoji;
+      btn.title = `Slot ${idx + 1}`;
+      btn.addEventListener('click', () => {
+        selectedCustomSlot = idx;
+        renderCustomizerSlots();
+      });
+      slotContainer.appendChild(btn);
+    });
+  }
+
+  function renderCustomizerPalette() {
+    if (!paletteContainer) return;
+    paletteContainer.innerHTML = '';
+    EMOJI_PALETTE.forEach(emoji => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'emoji-option-btn';
+      btn.textContent = emoji;
+      btn.addEventListener('click', () => {
+        activeReactions[selectedCustomSlot] = emoji;
+        try {
+          localStorage.setItem('goygbiv_reactions', JSON.stringify(activeReactions));
+        } catch {}
+        renderReactionButtons();
+        // Advance to next slot for rapid customization
+        selectedCustomSlot = (selectedCustomSlot + 1) % 4;
+        renderCustomizerSlots();
+      });
+      paletteContainer.appendChild(btn);
+    });
+  }
 }

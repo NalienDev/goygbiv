@@ -275,6 +275,16 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── Send Reaction ──
+  socket.on('send-reaction', (data) => {
+    if (data && data.gameId && data.emoji) {
+      io.to(data.gameId).emit('reaction-received', {
+        emoji: data.emoji,
+        senderId: currentPlayerId,
+      });
+    }
+  });
+
   // ── Disconnect ──
   socket.on('disconnect', () => {
     console.log(`[Socket] Disconnected: ${socket.id}`);
@@ -285,22 +295,26 @@ io.on('connection', (socket) => {
 
       const game = gameManager.getGame(gid);
       if (game) {
+        const p = game.players.get(pid);
+        // Immediately notify room that player disconnected/went offline
+        if (p) {
+          io.to(gid).emit('player-left', {
+            playerId: pid,
+            displayName: p.displayName,
+            gameInfo: gameManager.getGameInfo(gid),
+          });
+        }
+
         // Clear previous disconnect timer if any
         if (game.disconnectTimers && game.disconnectTimers.has(pid)) {
           clearTimeout(game.disconnectTimers.get(pid));
         }
 
-        // Grace period (10s) before notifying and evaluating game continuation
+        // Grace period (10s) before evaluating game termination
         const timer = setTimeout(() => {
           if (game.disconnectTimers) game.disconnectTimers.delete(pid);
-          const p = game.players.get(pid);
-          if (p && !p.online) {
-            io.to(gid).emit('player-left', {
-              playerId: pid,
-              displayName: p.displayName,
-              gameInfo: gameManager.getGameInfo(gid),
-            });
-
+          const currentP = game.players.get(pid);
+          if (currentP && !currentP.online) {
             // If game is in progress and fewer than 2 players remain, end the game
             if (game.state !== 'lobby' && game.state !== 'finished') {
               const activeCount = gameManager.getActivePlayerCount(gid);

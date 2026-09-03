@@ -137,6 +137,42 @@
   <!-- Confetti Container -->
   <div id="confetti" class="confetti-container"></div>
 
+  <!-- Floating Reaction Bar -->
+  <div id="reaction-bar-container" class="reaction-bar-container">
+    <div class="reaction-buttons-wrap" id="reaction-buttons-wrap">
+      <!-- 4 circle reaction buttons rendered via JS -->
+    </div>
+    <button type="button" class="reaction-btn reaction-btn--customize" id="btn-open-customize" title="Customize reaction emojis">
+      ⚙️
+    </button>
+  </div>
+
+  <!-- Emoji Customizer Modal -->
+  <div id="emoji-customizer-modal" class="modal-backdrop hidden">
+    <div class="glass-card modal-card">
+      <div class="flex-center" style="justify-content: space-between; width: 100%; margin-bottom: var(--space-sm);">
+        <h3 class="heading-md" style="font-size: 1.1rem;">Customize Reaction Bar</h3>
+        <button type="button" class="btn btn--ghost btn--sm" id="btn-close-customizer" style="font-size: 1.1rem; padding: 2px 8px;">✕</button>
+      </div>
+      <p class="text-sm" style="color: var(--text-muted); margin-bottom: var(--space-md); text-align: center;">
+        Select which slot to change, then pick an emoji:
+      </p>
+
+      <!-- Slot Selector -->
+      <div class="reaction-slot-selector" id="reaction-slot-selector">
+        <!-- 4 slots -->
+      </div>
+
+      <!-- Emoji Grid -->
+      <div class="emoji-palette-grid" id="emoji-palette-grid">
+        <!-- Curated emojis to choose from -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Passing Emoji Particles Container -->
+  <div id="reaction-particles-container" class="reaction-particles-container"></div>
+
   <div id="toast" class="toast"></div>
 
   <script src="/socket.io/socket.io.js"></script>
