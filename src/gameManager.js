@@ -35,6 +35,7 @@ class GameManager {
       fullLibraries: null,
       savedAlbumIdsMap: null,
       votes: new Map(), // playerId → Set<votedPlayerId>
+      voteOrder: [],    // Ordered list of { playerId, votedIds } to track submission order for speed bonuses
       createdAt: Date.now(),
       listenTimeout: null,
       votingTimeout: null,
@@ -227,6 +228,7 @@ class GameManager {
 
     game.round++;
     game.votes.clear();
+    game.voteOrder = [];
     game.state = 'playing';
 
     const players = [...game.players.values()];
@@ -291,6 +293,8 @@ class GameManager {
     if (game.votes.has(playerId)) return false; // Already voted
 
     game.votes.set(playerId, new Set(votedPlayerIds));
+    // Track submission order for speed bonuses
+    game.voteOrder.push({ playerId, votedIds: new Set(votedPlayerIds) });
     return true;
   }
 
@@ -309,20 +313,52 @@ class GameManager {
     const playerResults = {};
     const allPlayerIds = [...game.players.keys()];
 
-    // Calculate score changes for each voter
+    // ── Speed bonus: for each actual owner, rank voters who correctly identified them ──
+    // speedBonus maps voterId → total bonus points from being 1st/2nd/3rd
+    const speedBonus = new Map();
+    const SPEED_REWARDS = [3, 2, 1]; // 1st, 2nd, 3rd correct voter per owner
+
+    for (const ownerId of actualOwners) {
+      let rank = 0;
+      // voteOrder preserves submission order
+      for (const entry of game.voteOrder) {
+        if (entry.votedIds.has(ownerId)) {
+          if (rank < SPEED_REWARDS.length) {
+            const bonus = SPEED_REWARDS[rank];
+            speedBonus.set(entry.playerId, (speedBonus.get(entry.playerId) || 0) + bonus);
+          }
+          rank++;
+        }
+      }
+    }
+
+    // ── Calculate score changes for each voter ──
     for (const [voterId, votedIds] of game.votes) {
       let roundScore = 0;
       const details = [];
 
+      // +3 for correct vote, -2 for wrong vote
       for (const votedId of votedIds) {
         if (actualOwners.has(votedId)) {
-          roundScore += 2; // +2 points for correct guess
+          roundScore += 3;
           details.push({ playerId: votedId, correct: true });
         } else {
-          roundScore -= 1; // -1 point for wrong guess
+          roundScore -= 2;
           details.push({ playerId: votedId, correct: false });
         }
       }
+
+      // -1 for each actual owner the voter did NOT vote for (missed)
+      for (const ownerId of actualOwners) {
+        if (!votedIds.has(ownerId)) {
+          roundScore -= 1;
+          details.push({ playerId: ownerId, correct: false, missed: true });
+        }
+      }
+
+      // Add speed bonus
+      const voterSpeedBonus = speedBonus.get(voterId) || 0;
+      roundScore += voterSpeedBonus;
 
       // Update total score
       const currentScore = game.scores.get(voterId) || 0;
@@ -332,6 +368,7 @@ class GameManager {
         roundScore,
         totalScore: game.scores.get(voterId),
         details,
+        speedBonus: voterSpeedBonus,
       };
     }
 
@@ -342,6 +379,7 @@ class GameManager {
           roundScore: 0,
           totalScore: game.scores.get(playerId) || 0,
           details: [],
+          speedBonus: 0,
         };
       }
     }
@@ -471,6 +509,7 @@ class GameManager {
     game.fullLibraries = null;
     game.savedAlbumIdsMap = null;
     game.votes = new Map();
+    game.voteOrder = [];
     game.listenTimeout = null;
     game.votingTimeout = null;
     game.earlyRevealTimeout = null;

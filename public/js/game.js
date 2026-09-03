@@ -522,16 +522,16 @@ function applyRevealToCards(actualOwners, playerResults) {
     if (iVoted) {
       if (hasSong) {
         card.classList.add('correct');
-        badge.textContent = '+2 Correct! 🎧';
+        badge.textContent = '+3 Correct! 🎧';
         badge.className = 'vote-card__result vote-card__result--correct visible';
       } else {
         card.classList.add('wrong');
-        badge.textContent = '-1 Wrong ❌';
+        badge.textContent = '-2 Wrong ❌';
         badge.className = 'vote-card__result vote-card__result--wrong visible';
       }
     } else if (hasSong) {
       card.classList.add('correct');
-      badge.textContent = 'Has it! 🎧';
+      badge.textContent = 'Missed! -1 🎧';
       badge.className = 'vote-card__result vote-card__result--owns visible';
     } else {
       badge.textContent = 'Doesn\'t have it';
@@ -560,7 +560,12 @@ function showRevealSummary(track, actualOwners, playerResults) {
     const deltaSign = delta > 0 ? `+${delta}` : `${delta}`;
     const color = delta > 0 ? 'var(--clr-green)' : delta < 0 ? 'var(--clr-red)' : 'var(--text-secondary)';
 
-    scoreDelta.innerHTML = `Your Round Score: <span style="color: ${color}; font-size: 1.1rem;">${deltaSign} pts</span> (Total: ${myRes.totalScore} pts)`;
+    let bonusHtml = '';
+    if (myRes.speedBonus && myRes.speedBonus > 0) {
+      bonusHtml = ` <span style="color: var(--clr-violet); font-size: 0.85rem;">⚡ +${myRes.speedBonus} speed bonus</span>`;
+    }
+
+    scoreDelta.innerHTML = `Your Round Score: <span style="color: ${color}; font-size: 1.1rem;">${deltaSign} pts</span>${bonusHtml} (Total: ${myRes.totalScore} pts)`;
   }
 
   card.classList.remove('hidden');
