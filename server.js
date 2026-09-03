@@ -54,6 +54,39 @@ const CLIENT_IDS = (process.env.SPOTIFY_CLIENT_IDS || '')
 const clientIdUsage = new Map(); // clientId → Set<spotifyUserId>
 CLIENT_IDS.forEach(id => clientIdUsage.set(id, new Set()));
 
+const STORAGE_FILE = path.join(__dirname, 'client_id_usage.json');
+
+function loadClientIdUsage() {
+  try {
+    if (fs.existsSync(STORAGE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf8'));
+      for (const [cId, userList] of Object.entries(data)) {
+        if (clientIdUsage.has(cId)) {
+          userList.forEach(uId => clientIdUsage.get(cId).add(uId));
+        }
+      }
+      console.log('[Server] Loaded client ID usage from disk.');
+    }
+  } catch (err) {
+    console.warn('[Server] Failed to load client_id_usage.json:', err.message);
+  }
+}
+
+function saveClientIdUsage() {
+  try {
+    const obj = {};
+    for (const [cId, users] of clientIdUsage.entries()) {
+      obj[cId] = Array.from(users);
+    }
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[Server] Failed to save client_id_usage.json:', err.message);
+  }
+}
+
+// Load existing mappings from file
+loadClientIdUsage();
+
 // Spotify Development Mode allows up to 5 users per app
 const MAX_USERS_PER_CLIENT_ID = 5;
 
@@ -64,11 +97,22 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── API Routes ───
 
+// Get list of all configured Client IDs
+app.get('/api/client-ids', (req, res) => {
+  res.json({ clientIds: CLIENT_IDS });
+});
+
 // Get an available Client ID from the pool
+// If ?requestedClientId= or ?preferredClientId= is provided and valid, uses that
 // If ?spotifyUserId= is provided, returns the user's existing Client ID first
 app.get('/api/client-id', (req, res) => {
   if (CLIENT_IDS.length === 0) {
     return res.status(500).json({ error: 'No Spotify Client IDs configured' });
+  }
+
+  const reqClientId = req.query.requestedClientId || req.query.preferredClientId || req.query.clientId;
+  if (reqClientId && CLIENT_IDS.includes(reqClientId)) {
+    return res.json({ clientId: reqClientId, requested: true });
   }
 
   // If a Spotify user ID is provided, check if they're already registered under a Client ID
@@ -91,8 +135,9 @@ app.get('/api/client-id', (req, res) => {
     }
   }
 
+  // Fallback to first client ID if all are marked full
   if (!selectedId) {
-    return res.status(503).json({ error: 'All Spotify Client IDs are full (5 users each). Add more Client IDs to SPOTIFY_CLIENT_IDS.' });
+    selectedId = CLIENT_IDS[0];
   }
 
   res.json({ clientId: selectedId });
@@ -112,8 +157,12 @@ app.get('/api/client-id-for-user/:spotifyUserId', (req, res) => {
 // Register a user against a Client ID (called after successful auth)
 app.post('/api/register-user', (req, res) => {
   const { clientId, spotifyUserId } = req.body;
-  if (clientIdUsage.has(clientId)) {
+  if (clientId && spotifyUserId) {
+    if (!clientIdUsage.has(clientId)) {
+      clientIdUsage.set(clientId, new Set());
+    }
     clientIdUsage.get(clientId).add(spotifyUserId);
+    saveClientIdUsage();
   }
   res.json({ ok: true });
 });

@@ -47,16 +47,37 @@ async function generateCodeChallenge(codeVerifier) {
  * Checks for a previously used Client ID (localStorage) to avoid 403 errors
  * from Spotify's Development Mode per-app user limit.
  */
-async function startSpotifyAuth(returnPath = '/') {
-  let clientId = null;
+/**
+ * Fetch configured Client IDs from server
+ */
+async function getConfiguredClientIds() {
+  try {
+    const res = await fetch('/api/client-ids');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.clientIds || [];
+  } catch {
+    return [];
+  }
+}
 
-  // 1. Check localStorage for a remembered Client ID from a previous session
-  const savedClientId = localStorage.getItem('goygbiv_client_id');
-  if (savedClientId) {
-    clientId = savedClientId;
+/**
+ * Start the Spotify OAuth PKCE flow
+ * Checks for explicit Client ID, previously used Client ID (localStorage), or server assignment.
+ */
+async function startSpotifyAuth(returnPath = '/', explicitClientId = null) {
+  let clientId = explicitClientId;
+
+  // 1. If explicit client ID is provided, use it
+  if (!clientId) {
+    // 2. Check localStorage for a remembered Client ID from a previous session
+    const savedClientId = localStorage.getItem('goygbiv_client_id');
+    if (savedClientId) {
+      clientId = savedClientId;
+    }
   }
 
-  // 2. If we have a remembered Spotify user ID, ask the server in case the
+  // 3. If we have a remembered Spotify user ID, ask the server in case the
   //    Client ID changed or localStorage was cleared but the server still knows
   if (!clientId) {
     const savedUser = localStorage.getItem('goygbiv_spotify_user_id');
@@ -73,7 +94,7 @@ async function startSpotifyAuth(returnPath = '/') {
     }
   }
 
-  // 3. Fall back to requesting a fresh Client ID from the pool
+  // 4. Fall back to requesting a fresh Client ID from the pool
   if (!clientId) {
     const res = await fetch('/api/client-id');
     const data = await res.json();
@@ -118,7 +139,9 @@ async function exchangeCodeForToken() {
   const error = urlParams.get('error');
 
   if (error) {
-    throw new Error(`Spotify auth error: ${error}`);
+    const err = new Error(`Spotify auth error: ${error}`);
+    if (error === 'access_denied') err.is403 = true;
+    throw err;
   }
 
   if (!code) {
@@ -146,7 +169,12 @@ async function exchangeCodeForToken() {
 
   if (!response.ok) {
     const errBody = await response.text();
-    throw new Error(`Token exchange failed: ${errBody}`);
+    const err = new Error(`Token exchange failed: ${errBody}`);
+    if (response.status === 403 || errBody.includes('user-not-registered') || errBody.includes('403')) {
+      err.is403 = true;
+      err.failedClientId = clientId;
+    }
+    throw err;
   }
 
   const data = await response.json();
@@ -163,7 +191,19 @@ async function exchangeCodeForToken() {
   sessionStorage.removeItem('spotify_code_verifier');
 
   // Fetch user profile and register with server
-  const profile = await fetchSpotifyApi('/me', tokenData.accessToken);
+  let profile;
+  try {
+    profile = await fetchSpotifyApi('/me', tokenData.accessToken);
+  } catch (err) {
+    if (err.message && err.message.includes('403')) {
+      const err403 = new Error('Spotify API 403: User is not whitelisted in this Spotify App');
+      err403.is403 = true;
+      err403.failedClientId = clientId;
+      throw err403;
+    }
+    throw err;
+  }
+
   sessionStorage.setItem('spotify_user', JSON.stringify({
     id: profile.id,
     displayName: profile.display_name || profile.id,

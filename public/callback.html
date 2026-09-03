@@ -19,12 +19,17 @@
   <script src="/js/spotifyAuth.js"></script>
   <script>
     (async () => {
+      const errorMsgEl = document.getElementById('error-msg');
+      const returnPath = sessionStorage.getItem('spotify_return_path') || '/';
+
       try {
         await exchangeCodeForToken();
 
+        // Success! Clear any failed attempts log
+        sessionStorage.removeItem('failed_client_ids');
+
         // Check if there's a pending game to join
         const pendingGame = sessionStorage.getItem('pending_game');
-        const returnPath = sessionStorage.getItem('spotify_return_path') || '/';
         sessionStorage.removeItem('pending_game');
         sessionStorage.removeItem('spotify_return_path');
 
@@ -35,12 +40,53 @@
         }
       } catch (err) {
         console.error('Auth callback error:', err);
-        document.getElementById('error-msg').textContent = err.message;
-        document.getElementById('error-msg').classList.remove('hidden');
+
+        const currentClientId = sessionStorage.getItem('spotify_client_id');
+        let failedIds = [];
+        try {
+          failedIds = JSON.parse(sessionStorage.getItem('failed_client_ids') || '[]');
+        } catch {}
+
+        if (currentClientId && !failedIds.includes(currentClientId)) {
+          failedIds.push(currentClientId);
+          sessionStorage.setItem('failed_client_ids', JSON.stringify(failedIds));
+        }
+
+        const is403 = err.is403 || (err.message && (err.message.includes('403') || err.message.includes('access_denied')));
+
+        if (is403) {
+          // Attempt automatic fallback to next Client ID
+          const allClientIds = await getConfiguredClientIds();
+          const remainingIds = allClientIds.filter(id => !failedIds.includes(id));
+
+          if (remainingIds.length > 0) {
+            const nextClientId = remainingIds[0];
+            const appIndex = allClientIds.indexOf(nextClientId) + 1;
+
+            errorMsgEl.textContent = `Access denied (403) on current app. Retrying automatically with Spotify App #${appIndex}...`;
+            errorMsgEl.classList.remove('hidden');
+
+            setTimeout(() => {
+              startSpotifyAuth(returnPath, nextClientId);
+            }, 1500);
+            return;
+          }
+        }
+
+        // If all Client IDs failed or non-403 error:
+        localStorage.removeItem('goygbiv_client_id');
+        sessionStorage.removeItem('failed_client_ids');
+
+        const userFriendlyMsg = is403
+          ? 'Spotify API 403 Forbidden: Your Spotify account is not added to the Developer Dashboard whitelist for any configured Spotify App. Please contact the host to add your account email.'
+          : err.message;
+
+        errorMsgEl.innerHTML = `${userFriendlyMsg}<br><br><a href="/" style="color: var(--clr-green); text-decoration: underline;">Return to Home</a>`;
+        errorMsgEl.classList.remove('hidden');
 
         setTimeout(() => {
           window.location.href = '/';
-        }, 4000);
+        }, 6000);
       }
     })();
   </script>

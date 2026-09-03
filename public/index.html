@@ -25,6 +25,12 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
             Connect with Spotify
           </button>
+          <div id="app-selector-container" class="hidden mt-md">
+            <label for="select-client-id" class="text-sm" style="display: block; margin-bottom: 4px; color: var(--clr-text-secondary);">Spotify App / Group:</label>
+            <select id="select-client-id" class="form-input text-sm" style="width: 100%; padding: 8px 12px; background: rgba(255,255,255,0.08); border-radius: 8px; color: #fff;">
+              <option value="">Auto (Default)</option>
+            </select>
+          </div>
           <p class="text-sm text-center mt-md">Free accounts can join. Premium needed for audio playback.</p>
         </div>
 
@@ -74,7 +80,7 @@
   <script src="/js/spotifyAuth.js"></script>
   <script>
     // Check if returning from auth callback or if already logged in
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       // Check for game join URL in query params
       const params = new URLSearchParams(window.location.search);
       const gameId = params.get('game');
@@ -87,9 +93,34 @@
           // Redirect to lobby
           window.location.href = `/lobby.html?game=${gameId}`;
         }
-      } else if (gameId) {
-        // Need to auth first, then join
-        sessionStorage.setItem('pending_game', gameId);
+      } else {
+        if (gameId) {
+          // Need to auth first, then join
+          sessionStorage.setItem('pending_game', gameId);
+        }
+        // Load configured client IDs for selector if multiple exist
+        try {
+          const clientIds = await getConfiguredClientIds();
+          if (clientIds && clientIds.length > 1) {
+            const selectEl = document.getElementById('select-client-id');
+            const containerEl = document.getElementById('app-selector-container');
+
+            clientIds.forEach((id, idx) => {
+              const opt = document.createElement('option');
+              opt.value = id;
+              opt.textContent = `App #${idx + 1} (${id.slice(0, 6)}...)`;
+              selectEl.appendChild(opt);
+            });
+
+            // If user has a remembered client ID, select it by default
+            const savedId = localStorage.getItem('goygbiv_client_id');
+            if (savedId && clientIds.includes(savedId)) {
+              selectEl.value = savedId;
+            }
+
+            containerEl.classList.remove('hidden');
+          }
+        } catch {}
       }
     });
 
@@ -115,7 +146,10 @@
         const returnPath = sessionStorage.getItem('pending_game')
           ? `/lobby.html?game=${sessionStorage.getItem('pending_game')}`
           : '/';
-        await startSpotifyAuth(returnPath);
+        const selectEl = document.getElementById('select-client-id');
+        const selectedId = selectEl && selectEl.value ? selectEl.value : null;
+
+        await startSpotifyAuth(returnPath, selectedId);
       } catch (err) {
         showToast('Failed to connect: ' + err.message);
       }
