@@ -18,6 +18,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = getSpotifyUser();
   const token = await getValidToken();
 
+  // Re-register with server in case it restarted and lost the user→clientId mapping
+  ensureRegisteredWithServer();
+
   // Populate user badge
   document.getElementById('display-name').value = user.displayName || '';
   document.getElementById('user-name').textContent = user.displayName || 'Player';

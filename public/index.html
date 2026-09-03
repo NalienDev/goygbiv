@@ -81,6 +81,8 @@
 
       if (isAuthenticated()) {
         showUserSection();
+        // Re-register with server in case it restarted and lost the user→clientId mapping
+        ensureRegisteredWithServer();
         if (gameId) {
           // Redirect to lobby
           window.location.href = `/lobby.html?game=${gameId}`;
