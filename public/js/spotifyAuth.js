@@ -42,19 +42,45 @@ async function generateCodeChallenge(codeVerifier) {
   return base64urlEncode(hash);
 }
 
-// ─── Auth Flow ───
-
 /**
  * Start the Spotify OAuth PKCE flow
- * Fetches an available Client ID from the server pool, then redirects
+ * Checks for a previously used Client ID (localStorage) to avoid 403 errors
+ * from Spotify's Development Mode per-app user limit.
  */
 async function startSpotifyAuth(returnPath = '/') {
-  // Get a Client ID from the server pool
-  const res = await fetch('/api/client-id');
-  const { clientId, error } = await res.json();
+  let clientId = null;
 
-  if (error || !clientId) {
-    throw new Error(error || 'No Client ID available');
+  // 1. Check localStorage for a remembered Client ID from a previous session
+  const savedClientId = localStorage.getItem('goygbiv_client_id');
+  if (savedClientId) {
+    clientId = savedClientId;
+  }
+
+  // 2. If we have a remembered Spotify user ID, ask the server in case the
+  //    Client ID changed or localStorage was cleared but the server still knows
+  if (!clientId) {
+    const savedUser = localStorage.getItem('goygbiv_spotify_user_id');
+    if (savedUser) {
+      try {
+        const lookupRes = await fetch(`/api/client-id?spotifyUserId=${encodeURIComponent(savedUser)}`);
+        const lookupData = await lookupRes.json();
+        if (lookupData.clientId) {
+          clientId = lookupData.clientId;
+        }
+      } catch {
+        // Fall through to fresh assignment
+      }
+    }
+  }
+
+  // 3. Fall back to requesting a fresh Client ID from the pool
+  if (!clientId) {
+    const res = await fetch('/api/client-id');
+    const data = await res.json();
+    if (data.error || !data.clientId) {
+      throw new Error(data.error || 'No Client ID available');
+    }
+    clientId = data.clientId;
   }
 
   // Generate PKCE values
@@ -65,6 +91,9 @@ async function startSpotifyAuth(returnPath = '/') {
   sessionStorage.setItem('spotify_code_verifier', codeVerifier);
   sessionStorage.setItem('spotify_client_id', clientId);
   sessionStorage.setItem('spotify_return_path', returnPath);
+
+  // Also persist in localStorage so it survives across sessions
+  localStorage.setItem('goygbiv_client_id', clientId);
 
   // Build authorization URL
   const params = new URLSearchParams({
@@ -142,6 +171,11 @@ async function exchangeCodeForToken() {
     avatarUrl: (profile.images && profile.images.length > 0) ? profile.images[0].url : null,
     isPremium: profile.product === 'premium',
   }));
+
+  // Persist the user→clientId mapping in localStorage so it survives across sessions.
+  // This prevents 403 errors when the user returns and the server has restarted.
+  localStorage.setItem('goygbiv_client_id', clientId);
+  localStorage.setItem('goygbiv_spotify_user_id', profile.id);
 
   // Register this user against the Client ID pool
   await fetch('/api/register-user', {
@@ -227,6 +261,30 @@ function getSpotifyUser() {
 
 function isAuthenticated() {
   return getTokens() !== null && getSpotifyUser() !== null;
+}
+
+/**
+ * Re-register the user→clientId mapping with the server.
+ * Call this on page load when the user is already authenticated to ensure
+ * the server's in-memory clientIdUsage map is repopulated after a restart.
+ */
+async function ensureRegisteredWithServer() {
+  const tokens = getTokens();
+  const user = getSpotifyUser();
+  if (!tokens || !tokens.clientId || !user || !user.id) return;
+
+  try {
+    await fetch('/api/register-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: tokens.clientId,
+        spotifyUserId: user.id,
+      }),
+    });
+  } catch {
+    // Non-critical — server will learn about the mapping on next auth
+  }
 }
 
 function clearAuthData() {

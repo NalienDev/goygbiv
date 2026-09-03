@@ -65,15 +65,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── API Routes ───
 
 // Get an available Client ID from the pool
+// If ?spotifyUserId= is provided, returns the user's existing Client ID first
 app.get('/api/client-id', (req, res) => {
   if (CLIENT_IDS.length === 0) {
     return res.status(500).json({ error: 'No Spotify Client IDs configured' });
   }
 
+  // If a Spotify user ID is provided, check if they're already registered under a Client ID
+  const spotifyUserId = req.query.spotifyUserId;
+  if (spotifyUserId) {
+    for (const [clientId, users] of clientIdUsage) {
+      if (users.has(spotifyUserId)) {
+        return res.json({ clientId, existing: true });
+      }
+    }
+  }
+
   // Fill each Client ID up to the 5-user Spotify limit before moving to the next.
-  // This avoids the previous "fewest users" round-robin which would alternate
-  // users between IDs after a server restart, causing 403s for users only
-  // registered on a specific app in the Spotify Developer Dashboard.
   let selectedId = null;
   for (const id of CLIENT_IDS) {
     const users = clientIdUsage.get(id);
@@ -88,6 +96,17 @@ app.get('/api/client-id', (req, res) => {
   }
 
   res.json({ clientId: selectedId });
+});
+
+// Look up which Client ID a user is registered under
+app.get('/api/client-id-for-user/:spotifyUserId', (req, res) => {
+  const { spotifyUserId } = req.params;
+  for (const [clientId, users] of clientIdUsage) {
+    if (users.has(spotifyUserId)) {
+      return res.json({ clientId, found: true });
+    }
+  }
+  res.json({ clientId: null, found: false });
 });
 
 // Register a user against a Client ID (called after successful auth)
@@ -470,6 +489,7 @@ function doReveal(gameId) {
     scoreboard: gameManager.getScoreboard(gameId),
     winner: results.winner,
     revealDuration: revealSeconds,
+    playlistSources: results.playlistSources,
   });
 
   if (results.winner) {

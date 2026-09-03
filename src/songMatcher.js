@@ -96,27 +96,31 @@ async function buildGameLibraries(players, categories) {
   const filteredLibraries = new Map();
   const fullLibraries = new Map();
   const savedAlbumIdsMap = new Map();
+  const playlistSourcesMap = new Map(); // playerId → Map<trackId, playlistInfo>
 
   await Promise.all(players.map(async (player) => {
     try {
-      const [filtered, full, albumIds] = await Promise.all([
+      const [filtered, full, albumIds, playlistSources] = await Promise.all([
         collectPlayerSongs(player.token, categories),
         collectAllPlayerSongs(player.token),
         spotifyApi.getUserSavedAlbumIds(player.token),
+        spotifyApi.getUserPlaylistSources(player.token),
       ]);
       filteredLibraries.set(player.id, filtered);
       fullLibraries.set(player.id, full);
       savedAlbumIdsMap.set(player.id, albumIds);
-      console.log(`[SongMatcher] ${player.displayName}: ${filtered.size} filtered tracks, ${full.size} total tracks, ${albumIds.size} saved albums`);
+      playlistSourcesMap.set(player.id, playlistSources);
+      console.log(`[SongMatcher] ${player.displayName}: ${filtered.size} filtered tracks, ${full.size} total tracks, ${albumIds.size} saved albums, ${playlistSources.size} playlist-sourced tracks`);
     } catch (err) {
       console.error(`[SongMatcher] Failed to fetch library for ${player.displayName}:`, err.message);
       filteredLibraries.set(player.id, new Map());
       fullLibraries.set(player.id, new Map());
       savedAlbumIdsMap.set(player.id, new Set());
+      playlistSourcesMap.set(player.id, new Map());
     }
   }));
 
-  return { filteredLibraries, fullLibraries, savedAlbumIdsMap };
+  return { filteredLibraries, fullLibraries, savedAlbumIdsMap, playlistSourcesMap };
 }
 
 /**

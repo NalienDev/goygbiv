@@ -157,8 +157,9 @@ function setupGameSocketListeners() {
     document.getElementById('phase-title').textContent = 'Listen Carefully 🎧';
     document.getElementById('phase-subtitle').textContent = 'Who in this room has this song in their library?';
 
-    // Hide reveal card
+    // Hide reveal card and playlist flash card
     document.getElementById('reveal-card').classList.add('hidden');
+    document.getElementById('playlist-flashcard').classList.add('hidden');
 
     // Update track placeholder / title
     if (data.track) {
@@ -263,6 +264,9 @@ function setupGameSocketListeners() {
 
     // Show breakdown summary card
     showRevealSummary(data.track, data.actualOwners, data.playerResults);
+
+    // Show playlist flash card if any playlist sources exist
+    renderPlaylistFlashcard(data.playlistSources);
   });
 
   // Game over
@@ -1188,4 +1192,63 @@ function setupCustomizerModal() {
       paletteContainer.appendChild(btn);
     });
   }
+}
+
+// ─── Playlist Flash Card (Reveal Phase) ───
+
+/**
+ * Display a scrolling flash card showing which playlist(s) the revealed song
+ * belongs to. Only shown when the song was found in a player's playlist
+ * (not for recent listens, saved albums, etc.).
+ */
+function renderPlaylistFlashcard(playlistSources) {
+  const container = document.getElementById('playlist-flashcard');
+  const content = document.getElementById('playlist-flashcard-content');
+
+  if (!playlistSources || playlistSources.length === 0) {
+    container.classList.add('hidden');
+    return;
+  }
+
+  content.innerHTML = '';
+
+  // Build a card entry for each player/playlist combo
+  playlistSources.forEach(source => {
+    const entry = document.createElement('div');
+    entry.className = 'playlist-flashcard__entry';
+
+    const img = source.playlistImage
+      ? `<img class="playlist-flashcard__img" src="${source.playlistImage}" alt="${escapeHtml(source.playlistName)}">`
+      : `<div class="playlist-flashcard__img playlist-flashcard__img--placeholder">🎵</div>`;
+
+    const avatar = source.avatarUrl
+      ? `<img class="playlist-flashcard__avatar" src="${source.avatarUrl}" alt="${escapeHtml(source.displayName)}">`
+      : `<div class="playlist-flashcard__avatar playlist-flashcard__avatar--placeholder">${source.displayName.charAt(0).toUpperCase()}</div>`;
+
+    entry.innerHTML = `
+      ${img}
+      <div class="playlist-flashcard__info">
+        <div class="playlist-flashcard__playlist-name">${escapeHtml(source.playlistName)}</div>
+        <div class="playlist-flashcard__player">
+          ${avatar}
+          <span>${escapeHtml(source.displayName)}</span>
+        </div>
+      </div>
+    `;
+
+    content.appendChild(entry);
+  });
+
+  // If multiple entries, duplicate for seamless looping scroll
+  if (playlistSources.length > 1) {
+    playlistSources.forEach(source => {
+      const clone = content.children[content.children.length - playlistSources.length].cloneNode(true);
+      content.appendChild(clone);
+    });
+    content.classList.add('playlist-flashcard__content--scrolling');
+  } else {
+    content.classList.remove('playlist-flashcard__content--scrolling');
+  }
+
+  container.classList.remove('hidden');
 }

@@ -34,6 +34,7 @@ class GameManager {
       filteredLibraries: null,
       fullLibraries: null,
       savedAlbumIdsMap: null,
+      playlistSourcesMap: null,
       votes: new Map(), // playerId → Set<votedPlayerId>
       voteOrder: [],    // Ordered list of { playerId, votedIds } to track submission order for speed bonuses
       createdAt: Date.now(),
@@ -204,7 +205,7 @@ class GameManager {
     console.log(`[GameManager] Loading libraries for game ${gameId}...`);
 
     const players = [...game.players.values()];
-    const { filteredLibraries, fullLibraries, savedAlbumIdsMap } = await songMatcher.buildGameLibraries(
+    const { filteredLibraries, fullLibraries, savedAlbumIdsMap, playlistSourcesMap } = await songMatcher.buildGameLibraries(
       players,
       game.settings.categories
     );
@@ -212,6 +213,7 @@ class GameManager {
     game.filteredLibraries = filteredLibraries;
     game.fullLibraries = fullLibraries;
     game.savedAlbumIdsMap = savedAlbumIdsMap;
+    game.playlistSourcesMap = playlistSourcesMap;
     game.state = 'playing';
 
     console.log(`[GameManager] Game ${gameId} started!`);
@@ -398,6 +400,40 @@ class GameManager {
       game.state = 'finished';
     }
 
+    // Build playlist source info for matching players
+    const playlistSources = [];
+    if (game.playlistSourcesMap) {
+      for (const ownerId of actualOwners) {
+        const playerSources = game.playlistSourcesMap.get(ownerId);
+        if (playerSources) {
+          const trackId = game.currentRound.track.id;
+          const trackSig = songMatcher.getSongSignature(game.currentRound.track);
+          let source = playerSources.get(trackId);
+          // Also try signature match if direct ID miss (different edition/remaster)
+          if (!source && trackSig) {
+            for (const [tid, info] of playerSources) {
+              const otherTrack = game.fullLibraries.get(ownerId)?.get(tid);
+              if (otherTrack && songMatcher.getSongSignature(otherTrack) === trackSig) {
+                source = info;
+                break;
+              }
+            }
+          }
+          if (source) {
+            const player = game.players.get(ownerId);
+            playlistSources.push({
+              playerId: ownerId,
+              displayName: player ? player.displayName : 'Unknown',
+              avatarUrl: player ? player.avatarUrl : null,
+              playlistName: source.playlistName,
+              playlistImage: source.playlistImage,
+              playlistId: source.playlistId,
+            });
+          }
+        }
+      }
+    }
+
     return {
       actualOwners: [...actualOwners],
       track: game.currentRound.track,
@@ -408,6 +444,7 @@ class GameManager {
       allVotes: Object.fromEntries(
         [...game.votes].map(([k, v]) => [k, [...v]])
       ),
+      playlistSources,
     };
   }
 
@@ -508,6 +545,7 @@ class GameManager {
     game.filteredLibraries = null;
     game.fullLibraries = null;
     game.savedAlbumIdsMap = null;
+    game.playlistSourcesMap = null;
     game.votes = new Map();
     game.voteOrder = [];
     game.listenTimeout = null;

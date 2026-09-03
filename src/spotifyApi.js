@@ -148,6 +148,46 @@ async function getUserPlaylistTracks(token) {
   return allTracks;
 }
 
+/**
+ * Get playlist source info for each track — maps trackId to the playlist it belongs to
+ * @returns {Map<string, object>} trackId → { playlistName, playlistImage, playlistId }
+ */
+async function getUserPlaylistSources(token) {
+  const playlists = await paginateAll(token, '/me/playlists?limit=50');
+  const sourceMap = new Map(); // trackId → { playlistName, playlistImage, playlistId }
+
+  const batchSize = 5;
+  for (let i = 0; i < playlists.length; i += batchSize) {
+    const batch = playlists.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (playlist) => {
+        try {
+          const items = await paginateAll(
+            token,
+            `/playlists/${playlist.id}/tracks?limit=100`,
+            'items',
+            200
+          );
+          const playlistInfo = {
+            playlistName: playlist.name || 'Unknown Playlist',
+            playlistImage: (playlist.images && playlist.images.length > 0) ? playlist.images[0].url : null,
+            playlistId: playlist.id,
+          };
+          for (const item of items) {
+            if (item && item.track && item.track.id && !sourceMap.has(item.track.id)) {
+              sourceMap.set(item.track.id, playlistInfo);
+            }
+          }
+        } catch {
+          // skip failed playlists
+        }
+      })
+    );
+  }
+
+  return sourceMap;
+}
+
 // ─── Saved Albums & Their Tracks ───
 
 async function getUserSavedAlbumTracks(token) {
@@ -278,6 +318,7 @@ module.exports = {
   getUserTopTracks,
   getUserSavedTracks,
   getUserPlaylistTracks,
+  getUserPlaylistSources,
   getUserSavedAlbumTracks,
   getUserSavedAlbumIds,
   getTrackDetails,
