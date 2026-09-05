@@ -184,11 +184,58 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Klipy GIF API Proxies
+app.get('/api/gifs/trending', async (req, res) => {
+  const apiKey = process.env.KLIPY_API_KEY;
+  if (!apiKey) {
+    return res.status(400).json({ error: 'KLIPY_API_KEY is not configured in .env' });
+  }
+  try {
+    const page = req.query.page || 1;
+    const url = `https://api.klipy.com/api/v1/${apiKey}/gifs/trending?page=${page}&per_page=21`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn(`[Klipy] Trending HTTP ${response.status}: ${errText.slice(0, 150)}`);
+      return res.status(response.status).json({ error: `Klipy returned HTTP ${response.status}` });
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[Klipy] Trending error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/gifs/search', async (req, res) => {
+  const apiKey = process.env.KLIPY_API_KEY;
+  if (!apiKey) {
+    return res.status(400).json({ error: 'KLIPY_API_KEY is not configured in .env' });
+  }
+  try {
+    const q = encodeURIComponent(req.query.q || '');
+    const page = req.query.page || 1;
+    const url = `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${q}&page=${page}&per_page=21`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.warn(`[Klipy] Search HTTP ${response.status}: ${errText.slice(0, 150)}`);
+      return res.status(response.status).json({ error: `Klipy returned HTTP ${response.status}` });
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('[Klipy] Search error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Config for frontend
 app.get('/api/config', (req, res) => {
   res.json({
     baseUrl: BASE_URL,
     hasClientIds: CLIENT_IDS.length > 0,
+    hasKlipy: !!process.env.KLIPY_API_KEY,
   });
 });
 
@@ -311,15 +358,15 @@ io.on('connection', (socket) => {
 
       await gameManager.startGame(data.gameId);
 
+      // Start first round immediately with NO delay
+      startNewRound(data.gameId);
+
       io.to(data.gameId).emit('game-started', {
         gameId: data.gameId,
         gameInfo: gameManager.getGameInfo(data.gameId),
       });
 
       callback({ success: true });
-
-      // Start first round after a brief delay
-      setTimeout(() => startNewRound(data.gameId), 2000);
     } catch (err) {
       callback({ success: false, error: err.message });
     }
@@ -354,6 +401,19 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── Send GIF Reaction ──
+  socket.on('send-gif-reaction', (data) => {
+    if (data && data.gameId && data.gifUrl) {
+      const game = gameManager.getGame(data.gameId);
+      const player = game ? game.players.get(currentPlayerId) : null;
+      io.to(data.gameId).emit('gif-reaction-received', {
+        gifUrl: data.gifUrl,
+        senderId: currentPlayerId,
+        senderName: player ? player.displayName : (data.senderName || 'Player'),
+      });
+    }
+  });
+
   // ── Disconnect ──
   socket.on('disconnect', () => {
     console.log(`[Socket] Disconnected: ${socket.id}`);
@@ -376,7 +436,7 @@ io.on('connection', (socket) => {
           clearTimeout(game.disconnectTimers.get(pid));
         }
 
-        // Brief grace period (1.8s) before evaluating disconnect
+        // Grace period (8s) before evaluating disconnect to allow page transitions
         const timer = setTimeout(() => {
           if (game.disconnectTimers) game.disconnectTimers.delete(pid);
           const currentP = game.players.get(pid);
@@ -401,7 +461,7 @@ io.on('connection', (socket) => {
               });
 
               // If game is in progress and fewer than 2 active players remain, end the game
-              if (game.state !== 'finished') {
+              if (game.state !== 'finished' && game.state !== 'loading') {
                 const activeCount = gameManager.getActivePlayerCount(gid);
                 if (activeCount < 2) {
                   clearGameTimers(game);
@@ -416,7 +476,7 @@ io.on('connection', (socket) => {
               }
             }
           }
-        }, 1800);
+        }, 8000);
 
         if (game.disconnectTimers) {
           game.disconnectTimers.set(pid, timer);
@@ -442,8 +502,10 @@ function startNewRound(gameId) {
 
   clearGameTimers(game);
 
-  // Check if at least 2 players are active
-  if (gameManager.getActivePlayerCount(gameId) < 2) {
+  // Check if at least 2 players are in the game
+  // (For round 1, check registered players since clients are transitioning from lobby)
+  const activeCount = game.round < 1 ? game.players.size : gameManager.getActivePlayerCount(gameId);
+  if (activeCount < 2 && game.players.size < 2) {
     game.state = 'finished';
     io.to(gameId).emit('pause-playback');
     io.to(gameId).emit('game-over', {

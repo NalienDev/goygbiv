@@ -84,6 +84,15 @@ function joinLobby() {
     isPremium: user.isPremium,
   }, (res) => {
     if (res && res.success) {
+      // If game has already started or is in progress, forward player immediately to game page
+      if (res.gameInfo && (res.gameInfo.state === 'playing' || res.gameInfo.state === 'voting' || res.gameInfo.state === 'revealing')) {
+        sessionStorage.setItem('current_game_id', gameId);
+        if (selectedDeviceId) {
+          sessionStorage.setItem('selected_device_id', selectedDeviceId);
+        }
+        window.location.href = `/game.html?game=${gameId}`;
+        return;
+      }
       updateLobbyUI(res.gameInfo);
     } else {
       showToast('Could not join lobby: ' + (res ? res.error : 'Game not found'));

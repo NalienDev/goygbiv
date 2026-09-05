@@ -87,6 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   setupGameSocketListeners();
   initReactions();
+  initGifPicker();
 });
 
 function rejoinGame() {
@@ -121,6 +122,12 @@ function syncMidgameRound(gameInfo, round) {
   currentRound = round.roundNumber;
   document.getElementById('round-indicator').textContent = `Round ${currentRound}`;
 
+  // Hide reveal card and playlist flash card if any
+  const revealCard = document.getElementById('reveal-card');
+  if (revealCard) revealCard.classList.add('hidden');
+  const flashcard = document.getElementById('playlist-flashcard');
+  if (flashcard) flashcard.classList.add('hidden');
+
   if (round.track) {
     document.getElementById('track-title').textContent = round.track.name;
     document.getElementById('track-artist').textContent = round.track.artists;
@@ -129,6 +136,9 @@ function syncMidgameRound(gameInfo, round) {
       document.getElementById('album-art-img').src = round.track.albumArt;
     }
   }
+
+  const artContainer = document.getElementById('album-art-container');
+  if (artContainer) artContainer.classList.add('now-playing__art--spinning');
 
   if (gameInfo.state === 'voting') {
     document.getElementById('phase-title').textContent = 'Vote Now! 🗳️';
@@ -141,6 +151,22 @@ function syncMidgameRound(gameInfo, round) {
     document.getElementById('phase-title').textContent = 'Listen Carefully 🎧';
     document.getElementById('phase-subtitle').textContent = 'Who in this room has this song in their library?';
     renderVotingGrid(currentPlayers, false);
+
+    const submitBtn = document.getElementById('btn-submit-votes');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Listening... (Voting opens in a second)';
+    }
+    updateVoteCountHint();
+
+    // Trigger local Spotify playback if premium
+    if (user.isPremium && round.track && round.track.uri) {
+      getValidToken().then(token => {
+        if (token) {
+          startSpotifyPlaybackDirect(token, round.track.uri, round.positionMs || 0);
+        }
+      });
+    }
   }
 }
 
@@ -327,6 +353,13 @@ function setupGameSocketListeners() {
       } else {
         spawnReactionParticles(data.emoji);
       }
+    }
+  });
+
+  // In-game GIF reaction received
+  socket.on('gif-reaction-received', (data) => {
+    if (data && data.gifUrl) {
+      spawnGifReaction(data.gifUrl, data.senderName);
     }
   });
 }
@@ -1255,3 +1288,206 @@ function renderPlaylistFlashcard(playlistSources) {
 
   container.classList.remove('hidden');
 }
+
+// ─── Klipy GIF Reactions ───
+
+let trendingGifsCache = null;
+let gifSearchDebounceTimer = null;
+
+function initGifPicker() {
+  const openBtn = document.getElementById('btn-open-gif-picker');
+  const closeBtn = document.getElementById('btn-close-gif-picker');
+  const modal = document.getElementById('gif-picker-modal');
+  const searchInput = document.getElementById('gif-search-input');
+  const searchBtn = document.getElementById('btn-search-gif');
+
+  if (!openBtn || !modal) return;
+
+  openBtn.addEventListener('click', () => {
+    modal.classList.remove('hidden');
+    if (!trendingGifsCache) {
+      loadTrendingGifs();
+    }
+    if (searchInput) searchInput.focus();
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      modal.classList.add('hidden');
+    });
+  }
+
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.classList.add('hidden');
+    }
+  });
+
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      clearTimeout(gifSearchDebounceTimer);
+      const query = e.target.value.trim();
+      if (!query) {
+        if (trendingGifsCache) renderGifs(trendingGifsCache);
+        return;
+      }
+      gifSearchDebounceTimer = setTimeout(() => {
+        searchGifs(query);
+      }, 350);
+    });
+
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(gifSearchDebounceTimer);
+        const query = searchInput.value.trim();
+        if (query) searchGifs(query);
+      }
+    });
+  }
+
+  if (searchBtn && searchInput) {
+    searchBtn.addEventListener('click', () => {
+      const query = searchInput.value.trim();
+      if (query) searchGifs(query);
+    });
+  }
+}
+
+async function loadTrendingGifs() {
+  const statusEl = document.getElementById('gif-picker-status');
+  if (statusEl) statusEl.textContent = 'Loading trending GIFs...';
+
+  try {
+    const res = await fetch('/api/gifs/trending');
+    const json = await res.json();
+    if (json.error) {
+      if (statusEl) statusEl.textContent = json.error;
+      return;
+    }
+    const items = extractGifItems(json);
+    trendingGifsCache = items;
+    renderGifs(items);
+    if (statusEl) statusEl.textContent = items.length ? '' : 'No trending GIFs found';
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Could not load GIFs. Check connection.';
+  }
+}
+
+async function searchGifs(query) {
+  const statusEl = document.getElementById('gif-picker-status');
+  if (statusEl) statusEl.textContent = `Searching "${query}"...`;
+
+  try {
+    const res = await fetch(`/api/gifs/search?q=${encodeURIComponent(query)}`);
+    const json = await res.json();
+    if (json.error) {
+      if (statusEl) statusEl.textContent = json.error;
+      return;
+    }
+    const items = extractGifItems(json);
+    renderGifs(items);
+    if (statusEl) statusEl.textContent = items.length ? '' : 'No GIFs found for query';
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Search failed. Check connection.';
+  }
+}
+
+function extractGifItems(json) {
+  if (!json) return [];
+  let list = [];
+  if (json.data && Array.isArray(json.data.data)) {
+    list = json.data.data;
+  } else if (Array.isArray(json.data)) {
+    list = json.data;
+  } else if (Array.isArray(json.results)) {
+    list = json.results;
+  }
+
+  return list.map(item => {
+    let previewUrl = '';
+    let reactionUrl = '';
+
+    // Klipy API format: item.file.{sm, md, hd, xs}.{gif, webp, mp4}
+    if (item.file) {
+      previewUrl = item.file.sm?.gif?.url || item.file.xs?.gif?.url || item.file.md?.gif?.url || item.file.hd?.gif?.url ||
+                   item.file.sm?.webp?.url || item.file.md?.webp?.url;
+      reactionUrl = item.file.md?.gif?.url || item.file.sm?.gif?.url || item.file.hd?.gif?.url || previewUrl;
+    } else if (item.files) {
+      if (item.files.gif && item.files.gif.url) previewUrl = reactionUrl = item.files.gif.url;
+      else if (item.files.webp && item.files.webp.url) previewUrl = reactionUrl = item.files.webp.url;
+      else if (item.files.mp4 && item.files.mp4.url) previewUrl = reactionUrl = item.files.mp4.url;
+    }
+
+    if (!previewUrl && item.media_formats) {
+      previewUrl = item.media_formats.tinygif?.url || item.media_formats.gif?.url || '';
+      reactionUrl = item.media_formats.gif?.url || previewUrl;
+    }
+    if (!previewUrl && item.images && item.images.fixed_height) {
+      previewUrl = reactionUrl = item.images.fixed_height.url;
+    }
+    if (!previewUrl && item.url) previewUrl = reactionUrl = item.url;
+
+    return {
+      id: item.id || Math.random().toString(),
+      title: item.title || 'GIF',
+      previewUrl,
+      reactionUrl: reactionUrl || previewUrl,
+    };
+  }).filter(g => !!g.previewUrl);
+}
+
+function renderGifs(items) {
+  const grid = document.getElementById('gif-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  items.forEach(item => {
+    const el = document.createElement('div');
+    el.className = 'gif-item';
+    el.title = item.title;
+    el.innerHTML = `<img src="${item.previewUrl}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+
+    el.addEventListener('click', () => {
+      sendGifReaction(item.reactionUrl || item.previewUrl);
+      const modal = document.getElementById('gif-picker-modal');
+      if (modal) modal.classList.add('hidden');
+    });
+
+    grid.appendChild(el);
+  });
+}
+
+function sendGifReaction(gifUrl) {
+  if (socket && gameId && gifUrl) {
+    socket.emit('send-gif-reaction', {
+      gameId,
+      gifUrl,
+      senderName: user ? user.displayName : 'Player',
+    });
+  }
+}
+
+function spawnGifReaction(gifUrl, senderName = 'Player') {
+  const container = document.getElementById('gif-reaction-container') || document.body;
+  const card = document.createElement('div');
+  card.className = 'floating-gif-reaction';
+
+  // Random positioning in viewport
+  const leftPct = 15 + Math.random() * 55;
+  const topPct = 25 + Math.random() * 35;
+
+  card.style.left = `${leftPct}%`;
+  card.style.top = `${topPct}%`;
+
+  card.innerHTML = `
+    <img src="${gifUrl}" alt="GIF Reaction">
+    <div class="floating-gif-sender">${escapeHtml(senderName)}</div>
+  `;
+
+  container.appendChild(card);
+
+  setTimeout(() => {
+    card.remove();
+  }, 4000);
+}
+

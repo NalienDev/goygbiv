@@ -156,6 +156,9 @@
     <div class="reaction-buttons-wrap" id="reaction-buttons-wrap">
       <!-- 4 circle reaction buttons rendered via JS -->
     </div>
+    <button type="button" class="reaction-btn reaction-btn--gif" id="btn-open-gif-picker" title="Send a GIF reaction">
+      🎞️
+    </button>
     <button type="button" class="reaction-btn reaction-btn--customize" id="btn-open-customize" title="Customize reaction emojis">
       ⚙️
     </button>
@@ -192,11 +195,35 @@
     </div>
   </div>
 
+  <!-- GIF Reaction Picker Modal -->
+  <div id="gif-picker-modal" class="modal-backdrop hidden">
+    <div class="glass-card modal-card gif-picker-card">
+      <div class="flex-center" style="justify-content: space-between; width: 100%; margin-bottom: var(--space-sm);">
+        <h3 class="heading-md" style="font-size: 1.1rem;">React with a GIF 🎞️</h3>
+        <button type="button" class="btn btn--ghost btn--sm" id="btn-close-gif-picker" style="font-size: 1.1rem; padding: 2px 8px;">✕</button>
+      </div>
+      <div class="gif-search-box">
+        <input type="text" id="gif-search-input" class="input input--sm" placeholder="Search Klipy GIFs..." autocomplete="off">
+        <button type="button" class="btn btn--primary btn--sm" id="btn-search-gif">Search</button>
+      </div>
+      <div class="gif-picker-status text-sm" id="gif-picker-status" style="color: var(--text-muted); text-align: center; margin-bottom: var(--space-xs);"></div>
+      <div class="gif-grid" id="gif-grid">
+        <!-- Dynamically rendered GIFs -->
+      </div>
+      <div class="text-sm" style="color: var(--text-muted); text-align: right; margin-top: var(--space-xs); font-size: 0.72rem;">
+        Powered by <strong>KLIPY</strong>
+      </div>
+    </div>
+  </div>
+
   <!-- Passing Emoji Particles Container -->
   <div id="reaction-particles-container" class="reaction-particles-container"></div>
 
   <!-- Giant Mega Emoji Container -->
   <div id="mega-reaction-container" class="mega-reaction-container"></div>
+
+  <!-- Floating GIF Reaction Container -->
+  <div id="gif-reaction-container" class="gif-reaction-container"></div>
 
   <div id="toast" class="toast"></div>
 

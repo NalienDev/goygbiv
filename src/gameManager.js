@@ -234,14 +234,30 @@ class GameManager {
     game.state = 'playing';
 
     const players = [...game.players.values()];
-    const result = songMatcher.pickRoundSong(
-      players,
-      game.filteredLibraries,
-      game.fullLibraries,
-      game.savedAlbumIdsMap,
-      game.usedTrackIds,
-      game.usedSignatures
-    );
+
+    // Secret shared round every 4 rounds (e.g. round 4, 8, 12...)
+    let result = null;
+    if (game.round > 1 && game.round % 4 === 0) {
+      result = songMatcher.pickSharedRoundSong(
+        players,
+        game.filteredLibraries,
+        game.fullLibraries,
+        game.savedAlbumIdsMap,
+        game.usedTrackIds,
+        game.usedSignatures
+      );
+    }
+
+    if (!result) {
+      result = songMatcher.pickRoundSong(
+        players,
+        game.filteredLibraries,
+        game.fullLibraries,
+        game.savedAlbumIdsMap,
+        game.usedTrackIds,
+        game.usedSignatures
+      );
+    }
 
     if (!result) {
       // No more suitable songs found
