@@ -184,25 +184,42 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Klipy GIF API In-Memory Cache (reduces API calls & prevents HTTP 429 errors)
+const klipyCache = new Map();
+const KLIPY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 // Klipy GIF API Proxies
 app.get('/api/gifs/trending', async (req, res) => {
   const apiKey = process.env.KLIPY_API_KEY;
   if (!apiKey) {
     return res.status(400).json({ error: 'KLIPY_API_KEY is not configured in .env' });
   }
+
+  const page = req.query.page || 1;
+  const cacheKey = `trending:${page}`;
+  const cached = klipyCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < KLIPY_CACHE_TTL)) {
+    return res.json(cached.data);
+  }
+
   try {
-    const page = req.query.page || 1;
     const url = `https://api.klipy.com/api/v1/${apiKey}/gifs/trending?page=${page}&per_page=21`;
     const response = await fetch(url);
     if (!response.ok) {
       const errText = await response.text();
       console.warn(`[Klipy] Trending HTTP ${response.status}: ${errText.slice(0, 150)}`);
+      if (cached && response.status === 429) {
+        console.log('[Klipy] Serving stale trending cache on 429');
+        return res.json(cached.data);
+      }
       return res.status(response.status).json({ error: `Klipy returned HTTP ${response.status}` });
     }
     const data = await response.json();
+    klipyCache.set(cacheKey, { timestamp: Date.now(), data });
     res.json(data);
   } catch (err) {
     console.error('[Klipy] Trending error:', err.message);
+    if (cached) return res.json(cached.data);
     res.status(500).json({ error: err.message });
   }
 });
@@ -212,20 +229,34 @@ app.get('/api/gifs/search', async (req, res) => {
   if (!apiKey) {
     return res.status(400).json({ error: 'KLIPY_API_KEY is not configured in .env' });
   }
+
+  const rawQ = (req.query.q || '').trim().toLowerCase();
+  const page = req.query.page || 1;
+  const cacheKey = `search:${rawQ}:${page}`;
+  const cached = klipyCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < KLIPY_CACHE_TTL)) {
+    return res.json(cached.data);
+  }
+
   try {
-    const q = encodeURIComponent(req.query.q || '');
-    const page = req.query.page || 1;
+    const q = encodeURIComponent(rawQ);
     const url = `https://api.klipy.com/api/v1/${apiKey}/gifs/search?q=${q}&page=${page}&per_page=21`;
     const response = await fetch(url);
     if (!response.ok) {
       const errText = await response.text();
       console.warn(`[Klipy] Search HTTP ${response.status}: ${errText.slice(0, 150)}`);
+      if (cached && response.status === 429) {
+        console.log('[Klipy] Serving stale search cache on 429');
+        return res.json(cached.data);
+      }
       return res.status(response.status).json({ error: `Klipy returned HTTP ${response.status}` });
     }
     const data = await response.json();
+    klipyCache.set(cacheKey, { timestamp: Date.now(), data });
     res.json(data);
   } catch (err) {
     console.error('[Klipy] Search error:', err.message);
+    if (cached) return res.json(cached.data);
     res.status(500).json({ error: err.message });
   }
 });
@@ -359,7 +390,7 @@ io.on('connection', (socket) => {
       await gameManager.startGame(data.gameId);
 
       // Start first round immediately with NO delay
-      startNewRound(data.gameId);
+      await startNewRound(data.gameId);
 
       io.to(data.gameId).emit('game-started', {
         gameId: data.gameId,
@@ -496,16 +527,15 @@ function clearGameTimers(game) {
   if (game.revealTimeout) { clearTimeout(game.revealTimeout); game.revealTimeout = null; }
 }
 
-function startNewRound(gameId) {
+async function startNewRound(gameId) {
   const game = gameManager.getGame(gameId);
   if (!game || game.state === 'finished') return;
 
   clearGameTimers(game);
 
-  // Check if at least 2 players are in the game
-  // (For round 1, check registered players since clients are transitioning from lobby)
+  // Check if at least 2 active online players are in the game
   const activeCount = game.round < 1 ? game.players.size : gameManager.getActivePlayerCount(gameId);
-  if (activeCount < 2 && game.players.size < 2) {
+  if (activeCount < 2) {
     game.state = 'finished';
     io.to(gameId).emit('pause-playback');
     io.to(gameId).emit('game-over', {
@@ -516,7 +546,7 @@ function startNewRound(gameId) {
     return;
   }
 
-  const round = gameManager.nextRound(gameId);
+  const round = await gameManager.nextRound(gameId);
   if (!round) {
     if (game.round <= 1 && [...game.scores.values()].every(s => s === 0)) {
       console.warn(`[Game] Game ${gameId} ended immediately: 0 songs found in libraries`);
@@ -617,8 +647,8 @@ function doReveal(gameId) {
     });
   } else {
     // Keep results on screen for configured duration (default: 10s)
-    game.revealTimeout = setTimeout(() => {
-      startNewRound(gameId);
+    game.revealTimeout = setTimeout(async () => {
+      await startNewRound(gameId);
     }, revealSeconds * 1000);
   }
 }

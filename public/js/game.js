@@ -425,16 +425,13 @@ function renderVotingGrid(players, enableVoting = false) {
   const grid = document.getElementById('voting-grid');
   grid.innerHTML = '';
 
-  players.forEach(p => {
+  // Only render active online players (offline players disappear from the game)
+  const activePlayers = (players || []).filter(p => p.online !== false);
+
+  activePlayers.forEach(p => {
     const card = document.createElement('div');
     card.className = 'vote-card';
     card.dataset.playerId = p.id;
-
-    const isOffline = (p.online === false);
-    if (isOffline) {
-      card.classList.add('vote-card--disconnected');
-      card.title = `${p.displayName} is disconnected`;
-    }
 
     if (selectedPlayerIds.has(p.id)) {
       card.classList.add('selected');
@@ -445,12 +442,12 @@ function renderVotingGrid(players, enableVoting = false) {
         ${p.avatarUrl ? `<img src="${p.avatarUrl}" alt="${p.displayName}">` : p.displayName.charAt(0).toUpperCase()}
       </div>
       <div class="vote-card__name">
-        ${escapeHtml(p.displayName)}${isOffline ? ' <span class="offline-badge">🔌 Offline</span>' : ''}
+        ${escapeHtml(p.displayName)}
       </div>
       <div class="vote-card__result" id="result-badge-${p.id}"></div>
     `;
 
-    if (enableVoting && !hasSubmittedVotes && !isOffline) {
+    if (enableVoting && !hasSubmittedVotes) {
       card.addEventListener('click', () => {
         if (hasSubmittedVotes) return;
         togglePlayerVote(p.id, card);
@@ -1289,10 +1286,139 @@ function renderPlaylistFlashcard(playlistSources) {
   container.classList.remove('hidden');
 }
 
-// ─── Klipy GIF Reactions ───
+// ─── Klipy GIF Reactions & Favorites ───
 
+const GIF_FAVORITES_STORAGE_KEY = 'goygbiv_gif_favorites';
 let trendingGifsCache = null;
+let currentDisplayedGifs = [];
 let gifSearchDebounceTimer = null;
+let activeGifTab = 'trending'; // 'trending' | 'favorites'
+let currentGifPage = 1;
+let currentSearchQuery = '';
+let isLoadingMoreGifs = false;
+let hasMoreGifs = true;
+
+function getSavedFavoriteGifs() {
+  try {
+    const raw = localStorage.getItem(GIF_FAVORITES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFavoriteGifs(list) {
+  try {
+    localStorage.setItem(GIF_FAVORITES_STORAGE_KEY, JSON.stringify(list));
+    updateFavoriteBadge();
+  } catch (err) {
+    console.warn('[GIF] Failed to save favorites:', err);
+  }
+}
+
+function isGifFavorited(id, previewUrl) {
+  const favs = getSavedFavoriteGifs();
+  return favs.some(f => (f.id && f.id === id) || (f.previewUrl && f.previewUrl === previewUrl));
+}
+
+function toggleFavoriteGif(item, e) {
+  if (e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+  let favs = getSavedFavoriteGifs();
+  const exists = favs.findIndex(f => (f.id && f.id === item.id) || (f.previewUrl && f.previewUrl === item.previewUrl));
+
+  if (exists >= 0) {
+    favs.splice(exists, 1);
+    showToast('Removed GIF from favorites');
+  } else {
+    favs.unshift({
+      id: item.id || Math.random().toString(),
+      title: item.title || 'Favorite GIF',
+      previewUrl: item.previewUrl,
+      reactionUrl: item.reactionUrl || item.previewUrl,
+    });
+    showToast('Saved GIF to favorites');
+  }
+
+  saveFavoriteGifs(favs);
+
+  if (activeGifTab === 'favorites') {
+    const searchInput = document.getElementById('gif-search-input');
+    renderFavoriteGifs(searchInput ? searchInput.value.trim() : '');
+  } else {
+    renderGifs(currentDisplayedGifs, false);
+  }
+}
+
+function updateFavoriteBadge() {
+  const countEl = document.getElementById('gif-fav-count');
+  if (countEl) {
+    const favs = getSavedFavoriteGifs();
+    countEl.textContent = favs.length;
+  }
+}
+
+function renderFavoriteGifs(filterQuery = '') {
+  const statusEl = document.getElementById('gif-picker-status');
+  const grid = document.getElementById('gif-grid');
+  let favs = getSavedFavoriteGifs();
+
+  if (filterQuery) {
+    const q = filterQuery.toLowerCase();
+    favs = favs.filter(f => (f.title || '').toLowerCase().includes(q));
+  }
+
+  if (favs.length === 0) {
+    if (grid) grid.innerHTML = '';
+    if (statusEl) {
+      statusEl.innerHTML = filterQuery 
+        ? `No favorites matching "${escapeHtml(filterQuery)}"` 
+        : `No favorite GIFs yet!<br><span style="font-size: 0.8rem; opacity: 0.8;">Click the star on any GIF in Trending to save it here and avoid API limits.</span>`;
+    }
+    return;
+  }
+
+  if (statusEl) statusEl.textContent = '';
+  renderGifs(favs, false);
+}
+
+function switchGifTab(tab) {
+  activeGifTab = tab;
+  const trendingTabBtn = document.getElementById('gif-tab-trending');
+  const favsTabBtn = document.getElementById('gif-tab-favorites');
+  const searchInput = document.getElementById('gif-search-input');
+  const searchBtn = document.getElementById('btn-search-gif');
+
+  if (tab === 'favorites') {
+    if (trendingTabBtn) trendingTabBtn.classList.remove('active');
+    if (favsTabBtn) favsTabBtn.classList.add('active');
+    if (searchInput) {
+      searchInput.placeholder = 'Search favorites...';
+      searchInput.value = '';
+    }
+    if (searchBtn) searchBtn.textContent = 'Search';
+    renderFavoriteGifs();
+  } else {
+    if (trendingTabBtn) trendingTabBtn.classList.add('active');
+    if (favsTabBtn) favsTabBtn.classList.remove('active');
+    if (searchInput) {
+      searchInput.placeholder = 'Search Klipy GIFs...';
+      searchInput.value = currentSearchQuery || '';
+    }
+    if (searchBtn) searchBtn.textContent = 'Search';
+    if (currentSearchQuery) {
+      searchGifs(currentSearchQuery, 1, false);
+    } else if (trendingGifsCache) {
+      const statusEl = document.getElementById('gif-picker-status');
+      if (statusEl) statusEl.textContent = '';
+      renderGifs(trendingGifsCache, false);
+    } else {
+      loadTrendingGifs(1, false);
+    }
+  }
+}
 
 function initGifPicker() {
   const openBtn = document.getElementById('btn-open-gif-picker');
@@ -1300,14 +1426,56 @@ function initGifPicker() {
   const modal = document.getElementById('gif-picker-modal');
   const searchInput = document.getElementById('gif-search-input');
   const searchBtn = document.getElementById('btn-search-gif');
+  const trendingTabBtn = document.getElementById('gif-tab-trending');
+  const favsTabBtn = document.getElementById('gif-tab-favorites');
+  const grid = document.getElementById('gif-grid');
+  const card = document.querySelector('.gif-picker-card');
 
   if (!openBtn || !modal) return;
 
+  updateFavoriteBadge();
+
+  // Tab button listeners
+  if (trendingTabBtn) {
+    trendingTabBtn.addEventListener('click', () => switchGifTab('trending'));
+  }
+  if (favsTabBtn) {
+    favsTabBtn.addEventListener('click', () => switchGifTab('favorites'));
+  }
+
+  // Scroll listener for infinite scrolling (vertical scroll reaching bottom)
+  if (grid) {
+    grid.addEventListener('scroll', () => {
+      if (activeGifTab !== 'trending' || isLoadingMoreGifs || !hasMoreGifs) return;
+      const threshold = 160;
+      if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - threshold) {
+        loadMoreGifs();
+      }
+    });
+
+    // Support scrollwheel scrolling on entire card
+    if (card) {
+      card.addEventListener('wheel', (e) => {
+        if (!grid.contains(e.target)) {
+          grid.scrollTop += e.deltaY;
+        }
+      }, { passive: true });
+    }
+  }
+
   openBtn.addEventListener('click', () => {
     modal.classList.remove('hidden');
-    if (!trendingGifsCache) {
-      loadTrendingGifs();
+    updateFavoriteBadge();
+
+    const favs = getSavedFavoriteGifs();
+    if (favs.length > 0 && activeGifTab === 'favorites') {
+      switchGifTab('favorites');
+    } else if (favs.length > 0 && !trendingGifsCache) {
+      switchGifTab('favorites');
+    } else {
+      switchGifTab(activeGifTab || 'trending');
     }
+
     if (searchInput) searchInput.focus();
   });
 
@@ -1326,13 +1494,23 @@ function initGifPicker() {
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       clearTimeout(gifSearchDebounceTimer);
-      const query = e.target.value.trim();
+      const query = searchInput.value.trim();
+
+      if (activeGifTab === 'favorites') {
+        renderFavoriteGifs(query);
+        return;
+      }
+
       if (!query) {
-        if (trendingGifsCache) renderGifs(trendingGifsCache);
+        currentSearchQuery = '';
+        currentGifPage = 1;
+        hasMoreGifs = true;
+        if (trendingGifsCache) renderGifs(trendingGifsCache, false);
+        else loadTrendingGifs(1, false);
         return;
       }
       gifSearchDebounceTimer = setTimeout(() => {
-        searchGifs(query);
+        searchGifs(query, 1, false);
       }, 350);
     });
 
@@ -1340,7 +1518,16 @@ function initGifPicker() {
       if (e.key === 'Enter') {
         clearTimeout(gifSearchDebounceTimer);
         const query = searchInput.value.trim();
-        if (query) searchGifs(query);
+        if (activeGifTab === 'favorites') {
+          renderFavoriteGifs(query);
+        } else if (query) {
+          searchGifs(query, 1, false);
+        } else {
+          currentSearchQuery = '';
+          currentGifPage = 1;
+          hasMoreGifs = true;
+          loadTrendingGifs(1, false);
+        }
       }
     });
   }
@@ -1348,47 +1535,117 @@ function initGifPicker() {
   if (searchBtn && searchInput) {
     searchBtn.addEventListener('click', () => {
       const query = searchInput.value.trim();
-      if (query) searchGifs(query);
+      if (activeGifTab === 'favorites') {
+        renderFavoriteGifs(query);
+      } else if (query) {
+        searchGifs(query, 1, false);
+      } else {
+        currentSearchQuery = '';
+        currentGifPage = 1;
+        hasMoreGifs = true;
+        loadTrendingGifs(1, false);
+      }
     });
   }
 }
 
-async function loadTrendingGifs() {
-  const statusEl = document.getElementById('gif-picker-status');
-  if (statusEl) statusEl.textContent = 'Loading trending GIFs...';
-
-  try {
-    const res = await fetch('/api/gifs/trending');
-    const json = await res.json();
-    if (json.error) {
-      if (statusEl) statusEl.textContent = json.error;
-      return;
-    }
-    const items = extractGifItems(json);
-    trendingGifsCache = items;
-    renderGifs(items);
-    if (statusEl) statusEl.textContent = items.length ? '' : 'No trending GIFs found';
-  } catch (err) {
-    if (statusEl) statusEl.textContent = 'Could not load GIFs. Check connection.';
+async function loadMoreGifs() {
+  if (activeGifTab !== 'trending' || isLoadingMoreGifs || !hasMoreGifs) return;
+  isLoadingMoreGifs = true;
+  const nextPage = currentGifPage + 1;
+  if (currentSearchQuery) {
+    await searchGifs(currentSearchQuery, nextPage, true);
+  } else {
+    await loadTrendingGifs(nextPage, true);
   }
 }
 
-async function searchGifs(query) {
+async function loadTrendingGifs(page = 1, append = false) {
   const statusEl = document.getElementById('gif-picker-status');
-  if (statusEl) statusEl.textContent = `Searching "${query}"...`;
+  const loadMoreEl = document.getElementById('gif-loading-more');
+
+  if (!append) {
+    currentGifPage = 1;
+    currentSearchQuery = '';
+    hasMoreGifs = true;
+    if (statusEl) statusEl.textContent = 'Loading trending GIFs...';
+  } else {
+    if (loadMoreEl) loadMoreEl.classList.remove('hidden');
+  }
 
   try {
-    const res = await fetch(`/api/gifs/search?q=${encodeURIComponent(query)}`);
+    const res = await fetch(`/api/gifs/trending?page=${page}`);
     const json = await res.json();
     if (json.error) {
-      if (statusEl) statusEl.textContent = json.error;
+      if (statusEl && !append) statusEl.textContent = json.error;
       return;
     }
     const items = extractGifItems(json);
-    renderGifs(items);
-    if (statusEl) statusEl.textContent = items.length ? '' : 'No GIFs found for query';
+    if (!append) {
+      trendingGifsCache = items;
+      if (activeGifTab === 'trending') {
+        renderGifs(items, false);
+        if (statusEl) statusEl.textContent = items.length ? '' : 'No trending GIFs found';
+      }
+    } else {
+      if (items.length === 0) {
+        hasMoreGifs = false;
+      } else {
+        currentGifPage = page;
+        if (activeGifTab === 'trending') {
+          renderGifs(items, true);
+        }
+      }
+    }
   } catch (err) {
-    if (statusEl) statusEl.textContent = 'Search failed. Check connection.';
+    if (statusEl && !append) statusEl.textContent = 'Could not load GIFs. Check connection.';
+  } finally {
+    if (loadMoreEl) loadMoreEl.classList.add('hidden');
+    isLoadingMoreGifs = false;
+  }
+}
+
+async function searchGifs(query, page = 1, append = false) {
+  const statusEl = document.getElementById('gif-picker-status');
+  const loadMoreEl = document.getElementById('gif-loading-more');
+
+  if (!append) {
+    currentGifPage = 1;
+    currentSearchQuery = query;
+    hasMoreGifs = true;
+    if (statusEl) statusEl.textContent = `Searching "${query}"...`;
+  } else {
+    if (loadMoreEl) loadMoreEl.classList.remove('hidden');
+  }
+
+  try {
+    const res = await fetch(`/api/gifs/search?q=${encodeURIComponent(query)}&page=${page}`);
+    const json = await res.json();
+    if (json.error) {
+      if (statusEl && !append) statusEl.textContent = json.error;
+      return;
+    }
+    const items = extractGifItems(json);
+    if (!append) {
+      if (activeGifTab === 'trending') {
+        renderGifs(items, false);
+        if (statusEl) statusEl.textContent = items.length ? '' : 'No GIFs found for query';
+      }
+    } else {
+      if (items.length === 0) {
+        hasMoreGifs = false;
+      } else {
+        currentGifPage = page;
+        if (activeGifTab === 'trending') {
+          renderGifs(items, true);
+        }
+      }
+    }
+  } catch (err) {
+    if (statusEl && !append) statusEl.textContent = 'Search failed. Check connection.';
+  } finally {
+    if (loadMoreEl) loadMoreEl.classList.add('hidden');
+    isLoadingMoreGifs = false;
   }
 }
 
@@ -1436,24 +1693,65 @@ function extractGifItems(json) {
   }).filter(g => !!g.previewUrl);
 }
 
-function renderGifs(items) {
+function renderGifs(items, append = false) {
   const grid = document.getElementById('gif-grid');
   if (!grid) return;
-  grid.innerHTML = '';
+
+  if (!append) {
+    grid.innerHTML = `
+      <div class="gif-grid-col" id="gif-col-0"></div>
+      <div class="gif-grid-col" id="gif-col-1"></div>
+      <div class="gif-grid-col" id="gif-col-2"></div>
+    `;
+    currentDisplayedGifs = [...items];
+  } else {
+    currentDisplayedGifs = [...currentDisplayedGifs, ...items];
+  }
+
+  const col0 = document.getElementById('gif-col-0');
+  const col1 = document.getElementById('gif-col-1');
+  const col2 = document.getElementById('gif-col-2');
+  if (!col0 || !col1 || !col2) return;
+  const cols = [col0, col1, col2];
 
   items.forEach(item => {
+    // Append to column with fewest items for balanced layout
+    let targetCol = cols[0];
+    for (let c = 1; c < cols.length; c++) {
+      if (cols[c].children.length < targetCol.children.length) {
+        targetCol = cols[c];
+      }
+    }
+
     const el = document.createElement('div');
     el.className = 'gif-item';
     el.title = item.title;
-    el.innerHTML = `<img src="${item.previewUrl}" alt="${escapeHtml(item.title)}" loading="lazy">`;
 
+    const isFav = isGifFavorited(item.id, item.previewUrl);
+
+    el.innerHTML = `
+      <img src="${item.previewUrl}" alt="${escapeHtml(item.title)}" loading="lazy">
+      <button type="button" class="gif-item__fav-btn ${isFav ? 'is-fav' : ''}" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">
+        ${isFav ? '★' : '☆'}
+      </button>
+    `;
+
+    // Favorite button click
+    const favBtn = el.querySelector('.gif-item__fav-btn');
+    if (favBtn) {
+      favBtn.addEventListener('click', (e) => {
+        toggleFavoriteGif(item, e);
+      });
+    }
+
+    // Card click sends reaction
     el.addEventListener('click', () => {
       sendGifReaction(item.reactionUrl || item.previewUrl);
       const modal = document.getElementById('gif-picker-modal');
       if (modal) modal.classList.add('hidden');
     });
 
-    grid.appendChild(el);
+    targetCol.appendChild(el);
   });
 }
 

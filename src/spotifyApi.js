@@ -96,12 +96,30 @@ async function getUserTopTracks(token) {
 
 async function getUserSavedTracks(token) {
   try {
-    const items = await paginateAll(token, '/me/tracks?limit=50', 'items', 150);
+    const items = await paginateAll(token, '/me/tracks?limit=50', 'items', 500);
     return items
       .filter(item => item && item.track && item.track.id)
       .map(item => normalizeTrack(item.track));
   } catch (err) {
     console.warn('[SpotifyApi] /me/tracks error:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Check if current user has saved specific tracks (definitive check via Spotify API)
+ * @param {string} token
+ * @param {string[]} trackIds - Array of Spotify track IDs (up to 50)
+ * @returns {Promise<boolean[]>} Array of booleans corresponding to trackIds
+ */
+async function checkUserSavedTracks(token, trackIds) {
+  if (!token || !trackIds || trackIds.length === 0) return [];
+  try {
+    const ids = trackIds.slice(0, 50).join(',');
+    const res = await spotifyFetch(token, `/me/tracks/contains?ids=${ids}`);
+    return Array.isArray(res) ? res : [];
+  } catch (err) {
+    console.warn('[SpotifyApi] /me/tracks/contains error:', err.message);
     return [];
   }
 }
@@ -317,6 +335,7 @@ module.exports = {
   getUserProfile,
   getUserTopTracks,
   getUserSavedTracks,
+  checkUserSavedTracks,
   getUserPlaylistTracks,
   getUserPlaylistSources,
   getUserSavedAlbumTracks,

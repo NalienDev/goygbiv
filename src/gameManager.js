@@ -2,6 +2,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const songMatcher = require('./songMatcher');
+const spotifyApi = require('./spotifyApi');
 
 class GameManager {
   constructor() {
@@ -31,6 +32,11 @@ class GameManager {
       currentRound: null,
       usedTrackIds: new Set(),
       usedSignatures: new Set(),
+      // Session-level persistence (persists across rematches in the same lobby)
+      sessionUsedTrackIds: new Set(),
+      sessionUsedSignatures: new Set(),
+      lastSourcePlayerId: null,
+      playerPickCounts: new Map(), // playerId -> number of times picked as source
       filteredLibraries: null,
       fullLibraries: null,
       savedAlbumIdsMap: null,
@@ -223,7 +229,7 @@ class GameManager {
   /**
    * Start a new round — pick a song and find matches
    */
-  nextRound(gameId) {
+  async nextRound(gameId) {
     const game = this.games.get(gameId);
     if (!game) throw new Error('Game not found');
     if (game.state === 'finished') return null;
@@ -233,7 +239,18 @@ class GameManager {
     game.voteOrder = [];
     game.state = 'playing';
 
-    const players = [...game.players.values()];
+    // Only consider online active players for song selection and matching
+    const players = [...game.players.values()].filter(p => p.online);
+    if (players.length === 0) {
+      game.state = 'finished';
+      return null;
+    }
+
+    // Combine current-game used tracks and session-wide used tracks
+    const effectiveUsedTrackIds = new Set([...game.usedTrackIds, ...(game.sessionUsedTrackIds || [])]);
+    const effectiveUsedSignatures = new Set([...game.usedSignatures, ...(game.sessionUsedSignatures || [])]);
+
+    if (!game.playerPickCounts) game.playerPickCounts = new Map();
 
     // Secret shared round every 4 rounds (e.g. round 4, 8, 12...)
     let result = null;
@@ -243,8 +260,10 @@ class GameManager {
         game.filteredLibraries,
         game.fullLibraries,
         game.savedAlbumIdsMap,
-        game.usedTrackIds,
-        game.usedSignatures
+        effectiveUsedTrackIds,
+        effectiveUsedSignatures,
+        game.lastSourcePlayerId,
+        game.playerPickCounts
       );
     }
 
@@ -254,8 +273,25 @@ class GameManager {
         game.filteredLibraries,
         game.fullLibraries,
         game.savedAlbumIdsMap,
+        effectiveUsedTrackIds,
+        effectiveUsedSignatures,
+        game.lastSourcePlayerId,
+        game.playerPickCounts
+      );
+    }
+
+    // If session history exhausted candidate pool, fall back to checking only this game's used tracks
+    if (!result && (effectiveUsedTrackIds.size > game.usedTrackIds.size)) {
+      console.log(`[GameManager] Session song pool exhausted, falling back to current game's used songs`);
+      result = songMatcher.pickRoundSong(
+        players,
+        game.filteredLibraries,
+        game.fullLibraries,
+        game.savedAlbumIdsMap,
         game.usedTrackIds,
-        game.usedSignatures
+        game.usedSignatures,
+        game.lastSourcePlayerId,
+        game.playerPickCounts
       );
     }
 
@@ -265,9 +301,45 @@ class GameManager {
       return null;
     }
 
+    // Track chosen song in both current game and session history
     game.usedTrackIds.add(result.track.id);
+    if (!game.sessionUsedTrackIds) game.sessionUsedTrackIds = new Set();
+    game.sessionUsedTrackIds.add(result.track.id);
+
     if (result.signature) {
       game.usedSignatures.add(result.signature);
+      if (!game.sessionUsedSignatures) game.sessionUsedSignatures = new Set();
+      game.sessionUsedSignatures.add(result.signature);
+    }
+
+    // Track source player rotation for balanced randomness
+    game.lastSourcePlayerId = result.sourcePlayerId;
+    game.playerPickCounts.set(
+      result.sourcePlayerId,
+      (game.playerPickCounts.get(result.sourcePlayerId) || 0) + 1
+    );
+
+    // Live Spotify check for online players not yet detected by local matching
+    // (Resolves false negatives where player saved track beyond initial fetch limits)
+    const unmatchedOnlinePlayers = players.filter(p => !result.matchingPlayerIds.includes(p.id) && p.token);
+    if (unmatchedOnlinePlayers.length > 0) {
+      try {
+        const liveChecks = await Promise.allSettled(
+          unmatchedOnlinePlayers.map(p => spotifyApi.checkUserSavedTracks(p.token, [result.track.id]))
+        );
+        liveChecks.forEach((check, idx) => {
+          if (check.status === 'fulfilled' && Array.isArray(check.value) && check.value[0] === true) {
+            const player = unmatchedOnlinePlayers[idx];
+            console.log(`[GameManager] Live check: "${result.track.name}" confirmed in ${player.displayName}'s Saved Tracks!`);
+            result.matchingPlayerIds.push(player.id);
+            if (game.fullLibraries && game.fullLibraries.get(player.id)) {
+              game.fullLibraries.get(player.id).set(result.track.id, result.track);
+            }
+          }
+        });
+      } catch (err) {
+        console.warn('[GameManager] Live checkUserSavedTracks check error:', err.message);
+      }
     }
 
     // Calculate start position
@@ -286,7 +358,7 @@ class GameManager {
       votingDeadline: null,
     };
 
-    console.log(`[GameManager] Round ${game.round}: "${result.track.name}" by ${result.track.artists}`);
+    console.log(`[GameManager] Round ${game.round}: "${result.track.name}" by ${result.track.artists} (source: ${result.sourcePlayerId}, matches: ${result.matchingPlayerIds.length})`);
     return game.currentRound;
   }
 
@@ -476,13 +548,15 @@ class GameManager {
       hostId: game.hostId,
       state: game.state,
       settings: game.settings,
-      players: [...game.players.values()].map(p => ({
-        id: p.id,
-        displayName: p.displayName,
-        avatarUrl: p.avatarUrl,
-        isPremium: p.isPremium,
-        online: !!p.online,
-      })),
+      players: [...game.players.values()]
+        .filter(p => game.state === 'lobby' || p.online)
+        .map(p => ({
+          id: p.id,
+          displayName: p.displayName,
+          avatarUrl: p.avatarUrl,
+          isPremium: p.isPremium,
+          online: !!p.online,
+        })),
       scores: Object.fromEntries(game.scores),
       round: game.round,
       currentRound: (game.currentRound && game.state !== 'finished') ? {
@@ -509,6 +583,7 @@ class GameManager {
     if (!game) return [];
 
     return [...game.players.values()]
+      .filter(p => game.state === 'lobby' || p.online)
       .map(p => ({
         id: p.id,
         displayName: p.displayName,
@@ -553,11 +628,23 @@ class GameManager {
     if (game.earlyRevealTimeout) clearTimeout(game.earlyRevealTimeout);
     if (game.revealTimeout) clearTimeout(game.revealTimeout);
 
+    // Retain songs from current game in session history
+    if (!game.sessionUsedTrackIds) game.sessionUsedTrackIds = new Set();
+    if (!game.sessionUsedSignatures) game.sessionUsedSignatures = new Set();
+    for (const id of (game.usedTrackIds || [])) {
+      game.sessionUsedTrackIds.add(id);
+    }
+    for (const sig of (game.usedSignatures || [])) {
+      game.sessionUsedSignatures.add(sig);
+    }
+
     game.state = 'lobby';
     game.round = 0;
     game.currentRound = null;
     game.usedTrackIds = new Set();
     game.usedSignatures = new Set();
+    game.lastSourcePlayerId = null;
+    if (game.playerPickCounts) game.playerPickCounts.clear();
     game.filteredLibraries = null;
     game.fullLibraries = null;
     game.savedAlbumIdsMap = null;
@@ -574,7 +661,7 @@ class GameManager {
       game.scores.set(playerId, 0);
     }
 
-    console.log(`[GameManager] Game ${gameId} reset to lobby for rematch`);
+    console.log(`[GameManager] Game ${gameId} reset to lobby for rematch (retained ${game.sessionUsedTrackIds.size} session tracks)`);
     return game;
   }
 

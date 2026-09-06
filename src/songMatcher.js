@@ -90,10 +90,10 @@ function cleanSongTitle(title) {
     // Remove (feat. ...), [feat. ...], (with ...), etc.
     .replace(/\s*[\(\[](?:feat\.?|ft\.?|featuring|with)\s+[^)\]]+[\)\]]/gi, '')
     .replace(/\s*-\s*(?:feat\.?|ft\.?|featuring|with)\s+.*$/gi, '')
-    // Remove version/remaster/edition in brackets
-    .replace(/\s*[\(\[](?:remaster(?:ed)?|deluxe|version|live|bonus|mono|stereo|anniversary|edit|radio|single|ep|explicit|clean|original(?:\s+mix)?|extended(?:\s+mix)?|acoustic|instrumental|album\s+version|recorded\s+at).*?[\)\]]/gi, '')
+    // Remove version/remaster/edition/audio in brackets
+    .replace(/\s*[\(\[](?:remaster(?:ed)?|deluxe|version|live|bonus|mono|stereo|anniversary|edit|radio|single|ep|explicit|clean|original(?:\s+mix)?|extended(?:\s+mix)?|acoustic|instrumental|album\s+version|recorded\s+at|official(?:\s+(?:audio|video|music\s+video|lyric\s+video))?|audio|visualizer|lyric\s+video).*?[\)\]]/gi, '')
     // Remove version/remaster/edition after hyphens
-    .replace(/\s*-\s*.*?(?:remaster(?:ed)?|deluxe|bonus|live|radio|single|ep|explicit|clean|original(?:\s+mix)?|extended(?:\s+mix)?|acoustic|instrumental|album\s+version|anniversary).*?$/gi, '')
+    .replace(/\s*-\s*.*?(?:remaster(?:ed)?|deluxe|bonus|live|radio|single|ep|explicit|clean|original(?:\s+mix)?|extended(?:\s+mix)?|acoustic|instrumental|album\s+version|anniversary|official(?:\s+(?:audio|video|music\s+video|lyric\s+video))?|audio|visualizer|lyric\s+video).*?$/gi, '')
     // Strip quotes and apostrophes so contractions (don't -> dont) stay intact
     .replace(/['’`"]/g, '')
     // Remove non-alphanumeric chars
@@ -161,7 +161,9 @@ function areTracksSameSong(t1, t2) {
 
   let titleMatches = (noSpace1 === noSpace2);
   if (!titleMatches) {
-    if ((noSpace1.startsWith(noSpace2) || noSpace2.startsWith(noSpace1)) && Math.abs(noSpace1.length - noSpace2.length) <= 3) {
+    if ((noSpace1.startsWith(noSpace2) || noSpace2.startsWith(noSpace1)) && Math.abs(noSpace1.length - noSpace2.length) <= 5) {
+      titleMatches = true;
+    } else if (Math.min(noSpace1.length, noSpace2.length) >= 6 && (noSpace1.includes(noSpace2) || noSpace2.includes(noSpace1))) {
       titleMatches = true;
     }
   }
@@ -255,9 +257,45 @@ async function buildGameLibraries(players, categories) {
 }
 
 /**
+ * Fisher-Yates array shuffle for uniform randomness
+ */
+function shuffleArray(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * Order candidate source players:
+ * - Deprioritizes lastSourcePlayerId (avoids back-to-back picks)
+ * - Prioritizes players with lower pick counts in this game
+ * - Breaks ties with a true Fisher-Yates shuffle
+ */
+function getPrioritizedSourcePlayers(players, lastSourcePlayerId = null, playerPickCounts = new Map()) {
+  if (!players || players.length === 0) return [];
+  if (players.length === 1) return [...players];
+
+  const shuffled = shuffleArray(players);
+
+  return shuffled.sort((a, b) => {
+    // If one is the lastSourcePlayer, heavily deprioritize
+    const aIsLast = (a.id === lastSourcePlayerId) ? 1 : 0;
+    const bIsLast = (b.id === lastSourcePlayerId) ? 1 : 0;
+    if (aIsLast !== bIsLast) return aIsLast - bIsLast;
+
+    const countA = playerPickCounts.get(a.id) || 0;
+    const countB = playerPickCounts.get(b.id) || 0;
+    return countA - countB;
+  });
+}
+
+/**
  * Pick a random song for a round:
- * 1. Pick a random player
- * 2. Pick a random song that hasn't been played in this game
+ * 1. Pick a prioritized player (deprioritizing last source & prioritizing least-picked players)
+ * 2. Pick a random song that hasn't been played in this game or session
  * 3. Check which players have that song
  */
 function pickRoundSong(
@@ -267,9 +305,12 @@ function pickRoundSong(
   savedAlbumIdsMap = new Map(),
   usedTrackIds = new Set(),
   usedSignatures = new Set(),
-  maxAttempts = 100
+  lastSourcePlayerId = null,
+  playerPickCounts = new Map(),
+  maxAttempts = 120
 ) {
-  const shuffledPlayers = [...players].sort(() => Math.random() - 0.5);
+  if (!players || players.length === 0) return null;
+  const candidatePlayers = getPrioritizedSourcePlayers(players, lastSourcePlayerId, playerPickCounts);
 
   function isTrackAlreadyUsed(track) {
     if (!track) return true;
@@ -281,7 +322,7 @@ function pickRoundSong(
 
   // Attempt 1: Pick from filtered libraries
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const sourcePlayer = shuffledPlayers[attempt % shuffledPlayers.length];
+    const sourcePlayer = candidatePlayers[attempt % candidatePlayers.length];
     let sourceLibrary = filteredLibraries.get(sourcePlayer.id);
 
     if (!sourceLibrary || sourceLibrary.size === 0) {
@@ -318,8 +359,8 @@ function pickRoundSong(
     };
   }
 
-  // Attempt 2: Fallback across all full libraries
-  for (const player of shuffledPlayers) {
+  // Attempt 2: Fallback across full libraries
+  for (const player of candidatePlayers) {
     const lib = fullLibraries.get(player.id);
     if (!lib || lib.size === 0) continue;
 
@@ -364,9 +405,12 @@ function pickSharedRoundSong(
   savedAlbumIdsMap = new Map(),
   usedTrackIds = new Set(),
   usedSignatures = new Set(),
+  lastSourcePlayerId = null,
+  playerPickCounts = new Map(),
   maxAttempts = 150
 ) {
   if (players.length < 2) return null;
+  const candidatePlayers = getPrioritizedSourcePlayers(players, lastSourcePlayerId, playerPickCounts);
 
   function isTrackAlreadyUsed(track) {
     if (!track) return true;
@@ -376,11 +420,9 @@ function pickSharedRoundSong(
     return false;
   }
 
-  const shuffledPlayers = [...players].sort(() => Math.random() - 0.5);
-
   // Search across libraries for a track present in at least 2 players' libraries
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const sourcePlayer = shuffledPlayers[attempt % shuffledPlayers.length];
+    const sourcePlayer = candidatePlayers[attempt % candidatePlayers.length];
     let sourceLibrary = filteredLibraries.get(sourcePlayer.id);
 
     if (!sourceLibrary || sourceLibrary.size === 0) {
